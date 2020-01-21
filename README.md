@@ -7,6 +7,7 @@ Go bindings for the libjaylink library.
 ## What Is It?
 
 Segger makes J-Link devices. These are USB or network connected JTAG/SWD interfaces.
+
 Devices: https://www.segger.com/products/debug-probes/j-link/
 
 libjaylink is a C-based library providing an API for controlling J-Link devices.
