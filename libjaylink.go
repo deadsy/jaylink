@@ -156,17 +156,46 @@ const (
 
 //-----------------------------------------------------------------------------
 
-// Capabilities is the base capabilities set.
-type Capabilities []byte
+func boolToInt(x bool) int {
+	if x {
+		return 1
+	}
+	return 0
+}
 
-// ExtendedCapabilities is the extended capabilities set.
-type ExtendedCapabilities []byte
+type HardwareStatus struct {
+	TargetVoltage uint16 // Target reference voltage in mV
+	Tck           bool   // TCK pin state
+	Tdi           bool   // TDI pin state
+	Tdo           bool   // TDO pin state
+	Tms           bool   // TMS pin state
+	Tres          bool   // TRES pin state
+	Trst          bool   // TRST pin state
+}
+
+func (hs *HardwareStatus) String() string {
+	s := []string{}
+	s = append(s, fmt.Sprintf("target_voltage %d", hs.TargetVoltage))
+	s = append(s, fmt.Sprintf("tck %d", boolToInt(hs.Tck)))
+	s = append(s, fmt.Sprintf("tdi %d", boolToInt(hs.Tdi)))
+	s = append(s, fmt.Sprintf("tdo %d", boolToInt(hs.Tdo)))
+	s = append(s, fmt.Sprintf("tms %d", boolToInt(hs.Tms)))
+	s = append(s, fmt.Sprintf("tres %d", boolToInt(hs.Tres)))
+	s = append(s, fmt.Sprintf("trst %d", boolToInt(hs.Trst)))
+	return strings.Join(s, " ")
+}
+
+//-----------------------------------------------------------------------------
+
+// Capabilities is a bitmap of device capabilities.
+type Capabilities []byte
 
 // DeviceCapability is a bit position within the capabilities bitmap.
 type DeviceCapability uint
 
 // DeviceCapability values.
 const (
+	// libjaylink values
 	DEV_CAP_GET_HW_VERSION    DeviceCapability = C.JAYLINK_DEV_CAP_GET_HW_VERSION
 	DEV_CAP_ADAPTIVE_CLOCKING DeviceCapability = C.JAYLINK_DEV_CAP_ADAPTIVE_CLOCKING
 	DEV_CAP_READ_CONFIG       DeviceCapability = C.JAYLINK_DEV_CAP_READ_CONFIG
@@ -183,10 +212,30 @@ const (
 	DEV_CAP_GET_EXT_CAPS      DeviceCapability = C.JAYLINK_DEV_CAP_GET_EXT_CAPS
 	DEV_CAP_EMUCOM            DeviceCapability = C.JAYLINK_DEV_CAP_EMUCOM
 	DEV_CAP_ETHERNET          DeviceCapability = C.JAYLINK_DEV_CAP_ETHERNET
+	// from jlink docs
+	DEV_CAP_RESERVED_1         DeviceCapability = 0
+	DEV_CAP_WRITE_DCC          DeviceCapability = 2
+	DEV_CAP_TRACE              DeviceCapability = 6
+	DEV_CAP_WRITE_MEM          DeviceCapability = 7
+	DEV_CAP_READ_MEM           DeviceCapability = 8
+	DEV_CAP_EXEC_CODE          DeviceCapability = 10
+	DEV_CAP_RESET_STOP_TIMED   DeviceCapability = 14
+	DEV_CAP_RESERVED_2         DeviceCapability = 15
+	DEV_CAP_MEASURE_RTCK_REACT DeviceCapability = 16
+	DEV_CAP_RW_MEM_ARM79       DeviceCapability = 18
+	DEV_CAP_READ_DCC           DeviceCapability = 20
+	DEV_CAP_GET_CPU_CAPS       DeviceCapability = 21
+	DEV_CAP_EXEC_CPU_CMD       DeviceCapability = 22
+	DEV_CAP_WRITE_DCC_EX       DeviceCapability = 24
+	DEV_CAP_UPDATE_FIRMWARE_EX DeviceCapability = 25
+	DEV_CAP_INDICATORS         DeviceCapability = 28
+	DEV_CAP_TEST_NET_SPEED     DeviceCapability = 29
+	DEV_CAP_RAWTRACE           DeviceCapability = 30
 )
 
 func (dc DeviceCapability) String() string {
 	dcStr := map[DeviceCapability]string{
+		// libjaylink values
 		DEV_CAP_GET_HW_VERSION:    "DEV_CAP_GET_HW_VERSION",
 		DEV_CAP_ADAPTIVE_CLOCKING: "DEV_CAP_ADAPTIVE_CLOCKING",
 		DEV_CAP_READ_CONFIG:       "DEV_CAP_READ_CONFIG",
@@ -203,6 +252,25 @@ func (dc DeviceCapability) String() string {
 		DEV_CAP_GET_EXT_CAPS:      "DEV_CAP_GET_EXT_CAPS",
 		DEV_CAP_EMUCOM:            "DEV_CAP_EMUCOM",
 		DEV_CAP_ETHERNET:          "DEV_CAP_ETHERNET",
+		// from jlink docs
+		DEV_CAP_RESERVED_1:         "reserved (always 1)",
+		DEV_CAP_WRITE_DCC:          "DEV_CAP_WRITE_DCC",
+		DEV_CAP_TRACE:              "DEV_CAP_TRACE",
+		DEV_CAP_WRITE_MEM:          "DEV_CAP_WRITE_MEM",
+		DEV_CAP_READ_MEM:           "DEV_CAP_READ_MEM",
+		DEV_CAP_EXEC_CODE:          "DEV_CAP_EXEC_CODE",
+		DEV_CAP_RESET_STOP_TIMED:   "DEV_CAP_RESET_STOP_TIMED",
+		DEV_CAP_RESERVED_2:         "reserved",
+		DEV_CAP_MEASURE_RTCK_REACT: "DEV_CAP_MEASURE_RTCK_REACT",
+		DEV_CAP_RW_MEM_ARM79:       "DEV_CAP_RW_MEM_ARM79",
+		DEV_CAP_READ_DCC:           "DEV_CAP_READ_DCC",
+		DEV_CAP_GET_CPU_CAPS:       "DEV_CAP_GET_CPU_CAPS",
+		DEV_CAP_EXEC_CPU_CMD:       "DEV_CAP_EXEC_CPU_CMD",
+		DEV_CAP_WRITE_DCC_EX:       "DEV_CAP_WRITE_DCC_EX",
+		DEV_CAP_UPDATE_FIRMWARE_EX: "DEV_CAP_UPDATE_FIRMWARE_EX",
+		DEV_CAP_INDICATORS:         "DEV_CAP_INDICATORS",
+		DEV_CAP_TEST_NET_SPEED:     "DEV_CAP_TEST_NET_SPEED",
+		DEV_CAP_RAWTRACE:           "DEV_CAP_RAWTRACE",
 	}
 	s, ok := dcStr[dc]
 	if !ok {
@@ -211,7 +279,11 @@ func (dc DeviceCapability) String() string {
 	return s
 }
 
-func hasCap(caps []byte, dc DeviceCapability) bool {
+// HasCap returns true if a capability is present within the capabilities set.
+func (caps Capabilities) HasCap(dc DeviceCapability) bool {
+	if caps == nil {
+		return false
+	}
 	n := int(dc)
 	if n >= (len(caps) << 3) {
 		return false
@@ -219,33 +291,15 @@ func hasCap(caps []byte, dc DeviceCapability) bool {
 	return caps[n>>3]&(1<<(n&7)) != 0
 }
 
-// HasCap returns true if a capability is present within the capabilities set.
-func (caps Capabilities) HasCap(dc DeviceCapability) bool {
-	return hasCap(caps, dc)
-}
-
-// HasCap returns true if a capability is present within the extended capabilities set.
-func (caps ExtendedCapabilities) HasCap(dc DeviceCapability) bool {
-	return hasCap(caps, dc)
-}
-
-func capString(caps []byte) string {
+func (caps Capabilities) String() string {
 	s := []string{}
 	for i := 0; i < (len(caps) << 3); i++ {
 		dc := DeviceCapability(i)
-		if hasCap(caps, dc) {
+		if caps.HasCap(dc) {
 			s = append(s, fmt.Sprintf("(%2d) %s", i, dc.String()))
 		}
 	}
 	return strings.Join(s, "\n")
-}
-
-func (caps Capabilities) String() string {
-	return capString(caps)
-}
-
-func (caps ExtendedCapabilities) String() string {
-	return capString(caps)
 }
 
 //-----------------------------------------------------------------------------
@@ -317,31 +371,43 @@ type DeviceHandle struct {
 
 func (hdl *DeviceHandle) String() string {
 	s := []string{}
+
 	// firmware version
 	ver, err := hdl.GetFirmwareVersion()
 	if err == nil {
 		s = append(s, fmt.Sprintf("firmware version: %s", ver))
 	}
 
-	// hardware info
-	info, err := hdl.GetHardwareInfo(HW_INFO_TARGET_POWER | HW_INFO_ITARGET | HW_INFO_ITARGET_PEAK)
-	if err == nil {
-		s = append(s, fmt.Sprintf("target power: %x", info[0]))
-		s = append(s, fmt.Sprintf("target current: %x", info[1]))
-		s = append(s, fmt.Sprintf("peak target current: %x", info[2]))
-	}
-
 	// capabilities
 	caps, err := hdl.GetCaps()
+	if err == nil && caps.HasCap(DEV_CAP_GET_EXT_CAPS) {
+		caps, err = hdl.GetExtendedCaps()
+	}
 	if err == nil {
 		s = append(s, fmt.Sprintf("capabilities:\n%s", caps))
 	}
 
-	if caps.HasCap(DEV_CAP_GET_EXT_CAPS) {
-		extcaps, err := hdl.GetExtendedCaps()
+	// hardware info
+	if caps.HasCap(DEV_CAP_GET_HW_INFO) {
+		info, err := hdl.GetHardwareInfo(HW_INFO_TARGET_POWER | HW_INFO_ITARGET | HW_INFO_ITARGET_PEAK)
 		if err == nil {
-			s = append(s, fmt.Sprintf("extended capabilities:\n%s", extcaps))
+			s = append(s, fmt.Sprintf("target power: %x", info[0]))
+			s = append(s, fmt.Sprintf("target current: %x", info[1]))
+			s = append(s, fmt.Sprintf("peak target current: %x", info[2]))
 		}
+	}
+
+	// free memory
+	if caps.HasCap(DEV_CAP_GET_FREE_MEMORY) {
+		free, err := hdl.GetFreeMemory()
+		if err == nil {
+			s = append(s, fmt.Sprintf("free memory: %d bytes", free))
+		}
+	}
+
+	status, err := hdl.GetHardwareStatus()
+	if err == nil {
+		s = append(s, fmt.Sprintf("hardware status: %s", status))
 	}
 
 	return strings.Join(s, "\n")
@@ -602,14 +668,25 @@ func (hdl *DeviceHandle) GetHardwareVersion() error {
 	}
 }
 
-func (hdl *DeviceHandle) GetHardwareStatus() error {
-		rc := int(C.jaylink_get_hardware_status(hdl.hdl, struct jaylink_hardware_status *status))
-    	if rc != C.JAYLINK_OK {
-		return newError("jaylink_get_hardware_status", rc)
-	}
-}
-
 */
+
+func (hdl *DeviceHandle) GetHardwareStatus() (*HardwareStatus, error) {
+	var cStatus C.struct_jaylink_hardware_status
+	rc := int(C.jaylink_get_hardware_status(hdl.hdl, &cStatus))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_get_hardware_status", rc)
+	}
+	status := HardwareStatus{
+		TargetVoltage: uint16(cStatus.target_voltage),
+		Tck:           bool(cStatus.tck),
+		Tdi:           bool(cStatus.tdi),
+		Tdo:           bool(cStatus.tdo),
+		Tms:           bool(cStatus.tms),
+		Tres:          bool(cStatus.tres),
+		Trst:          bool(cStatus.trst),
+	}
+	return &status, nil
+}
 
 // GetCaps retrieves the capabilities of a device.
 func (hdl *DeviceHandle) GetCaps() (Capabilities, error) {
@@ -628,7 +705,7 @@ func (hdl *DeviceHandle) GetCaps() (Capabilities, error) {
 }
 
 // GetExtendedCaps retrieves the extended capabilities of a device.
-func (hdl *DeviceHandle) GetExtendedCaps() (ExtendedCapabilities, error) {
+func (hdl *DeviceHandle) GetExtendedCaps() (Capabilities, error) {
 	cCaps := (*C.uint8_t)(C.malloc(C.JAYLINK_DEV_EXT_CAPS_SIZE))
 	defer C.free(unsafe.Pointer(cCaps))
 	rc := int(C.jaylink_get_extended_caps(hdl.hdl, cCaps))
@@ -643,14 +720,16 @@ func (hdl *DeviceHandle) GetExtendedCaps() (ExtendedCapabilities, error) {
 	return caps, nil
 }
 
-/*
- *
-func (hdl *DeviceHandle) GetFreeMemory() error {
-		rc := int(C.jaylink_get_free_memory(hdl.hdl, uint32_t *size))
-    	if rc != C.JAYLINK_OK {
-		return newError("jaylink_get_free_memory", rc)
+func (hdl *DeviceHandle) GetFreeMemory() (uint32, error) {
+	var cSize C.uint32_t
+	rc := int(C.jaylink_get_free_memory(hdl.hdl, &cSize))
+	if rc != C.JAYLINK_OK {
+		return 0, newError("jaylink_get_free_memory", rc)
 	}
+	return uint32(cSize), nil
 }
+
+/*
 
 func (hdl *DeviceHandle) ReadRawConfig() error {
 		rc := int(C.jaylink_read_raw_config(hdl.hdl, uint8_t *config))
@@ -759,11 +838,6 @@ func (ctx *Context) DiscoveryScan(ifaces HostInterface) error {
 // int jaylink_clear_reset(struct jaylink_device_handle *devh);
 // int jaylink_set_reset(struct jaylink_device_handle *devh);
 // int jaylink_set_target_power(struct jaylink_device_handle *devh, bool enable);
-
-//-----------------------------------------------------------------------------
-// util.c
-
-// bool jaylink_has_cap(const uint8_t *caps, uint32_t cap);
 
 //-----------------------------------------------------------------------------
 // version.c
