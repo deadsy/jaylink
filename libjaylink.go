@@ -163,6 +163,7 @@ func boolToInt(x bool) int {
 	return 0
 }
 
+// HardwareStatus stores the device hardware status.
 type HardwareStatus struct {
 	TargetVoltage uint16 // Target reference voltage in mV
 	Tck           bool   // TCK pin state
@@ -301,6 +302,21 @@ func (caps Capabilities) String() string {
 	}
 	return strings.Join(s, "\n")
 }
+
+//-----------------------------------------------------------------------------
+
+// LogLevel is the libjaylink log level.
+type LogLevel uint32
+
+// LogLevel values.
+const (
+	LOG_LEVEL_NONE     LogLevel = C.JAYLINK_LOG_LEVEL_NONE     // no messages
+	LOG_LEVEL_ERROR    LogLevel = C.JAYLINK_LOG_LEVEL_ERROR    // error messages
+	LOG_LEVEL_WARNING  LogLevel = C.JAYLINK_LOG_LEVEL_WARNING  // warnings
+	LOG_LEVEL_INFO     LogLevel = C.JAYLINK_LOG_LEVEL_INFO     // informational messages
+	LOG_LEVEL_DEBUG    LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG    // debug messages
+	LOG_LEVEL_DEBUG_IO LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG_IO // I/O debug messages
+)
 
 //-----------------------------------------------------------------------------
 
@@ -654,6 +670,7 @@ func (hdl *DeviceHandle) GetHardwareInfo(mask HardwareInfo) ([]uint32, error) {
 
 /*
 
+// GetCounters retrieves the counter values of a device.
 func (hdl *DeviceHandle) GetCounters() error {
 		rc := int(C.jaylink_get_counters(hdl.hdl, uint32_t mask, uint32_t *values))
     	if rc != C.JAYLINK_OK {
@@ -661,6 +678,7 @@ func (hdl *DeviceHandle) GetCounters() error {
 	}
 }
 
+// GetHardwareVersion retrieves the hardware version of a device.
 func (hdl *DeviceHandle) GetHardwareVersion() error {
 		rc := int(C.jaylink_get_hardware_version(hdl.hdl, struct jaylink_hardware_version *version))
     	if rc != C.JAYLINK_OK {
@@ -670,6 +688,7 @@ func (hdl *DeviceHandle) GetHardwareVersion() error {
 
 */
 
+// GetHardwareStatus retrieves the hardware status of a device.
 func (hdl *DeviceHandle) GetHardwareStatus() (*HardwareStatus, error) {
 	var cStatus C.struct_jaylink_hardware_status
 	rc := int(C.jaylink_get_hardware_status(hdl.hdl, &cStatus))
@@ -720,6 +739,7 @@ func (hdl *DeviceHandle) GetExtendedCaps() (Capabilities, error) {
 	return caps, nil
 }
 
+// GetFreeMemory retrieves the size of free memory of a device.
 func (hdl *DeviceHandle) GetFreeMemory() (uint32, error) {
 	var cSize C.uint32_t
 	rc := int(C.jaylink_get_free_memory(hdl.hdl, &cSize))
@@ -731,6 +751,7 @@ func (hdl *DeviceHandle) GetFreeMemory() (uint32, error) {
 
 /*
 
+// ReadRawConfig reads the raw configuration data of a device.
 func (hdl *DeviceHandle) ReadRawConfig() error {
 		rc := int(C.jaylink_read_raw_config(hdl.hdl, uint8_t *config))
     	if rc != C.JAYLINK_OK {
@@ -738,6 +759,7 @@ func (hdl *DeviceHandle) ReadRawConfig() error {
 	}
 }
 
+// WriteRawConfig writes the raw configuration data of a device.
 func (hdl *DeviceHandle) WriteRawConfig() error {
 		rc := int(C.jaylink_write_raw_config(hdl.hdl, const uint8_t *config))
     	if rc != C.JAYLINK_OK {
@@ -745,6 +767,7 @@ func (hdl *DeviceHandle) WriteRawConfig() error {
 	}
 }
 
+// Register registers a connection on a device.
 func (hdl *DeviceHandle) Register() error {
 		rc := int(C.jaylink_register(hdl.hdl, struct jaylink_connection *connection, struct jaylink_connection *connections, size_t *count))
     	if rc != C.JAYLINK_OK {
@@ -752,6 +775,7 @@ func (hdl *DeviceHandle) Register() error {
 	}
 }
 
+// Unregister unregisters a connection from a device.
 func (hdl *DeviceHandle) Unregister() error {
 		rc := int(C.jaylink_unregister(hdl.hdl, const struct jaylink_connection *connection, struct jaylink_connection *connections, size_t *count))
     	if rc != C.JAYLINK_OK {
@@ -803,11 +827,51 @@ func (ctx *Context) DiscoveryScan(ifaces HostInterface) error {
 //-----------------------------------------------------------------------------
 // log.c
 
-// int jaylink_log_set_level(struct jaylink_context *ctx, enum jaylink_log_level level);
-// int jaylink_log_get_level(const struct jaylink_context *ctx, enum jaylink_log_level *level);
-// int jaylink_log_set_callback(struct jaylink_context *ctx, jaylink_log_callback callback, void *user_data);
-// int jaylink_log_set_domain(struct jaylink_context *ctx, const char *domain);
-// const char *jaylink_log_get_domain(const struct jaylink_context *ctx);
+// LogSetLevel sets the log level.
+func (ctx *Context) LogSetLevel(level LogLevel) error {
+	var cLevel uint32
+	rc := int(C.jaylink_log_set_level(ctx.ctx, cLevel))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_log_set_level", rc)
+	}
+	return nil
+}
+
+// LogGetLevel gets the log level.
+func (ctx *Context) LogGetLevel() (LogLevel, error) {
+	var cLevel uint32
+	rc := int(C.jaylink_log_get_level(ctx.ctx, &cLevel))
+	if rc != C.JAYLINK_OK {
+		return 0, newError("jaylink_log_get_level", rc)
+	}
+	return LogLevel(cLevel), nil
+}
+
+/*
+
+// LogSetCallback sets the log callback function.
+func (ctx *Context) LogSetCallback() error {
+  rc := int(C.jaylink_log_set_callback(ctx.ctx, jaylink_log_callback callback, void *user_data))
+}
+
+*/
+
+// LogSetDomain sets the log domain.
+func (ctx *Context) LogSetDomain(domain string) error {
+	cDomain := C.CString(domain)
+	defer C.free(unsafe.Pointer(cDomain))
+	rc := int(C.jaylink_log_set_domain(ctx.ctx, cDomain))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_log_set_domain", rc)
+	}
+	return nil
+}
+
+// LogGetDomain gets the log domain.
+func (ctx *Context) LogGetDomain() string {
+	cDomain := C.jaylink_log_get_domain(ctx.ctx)
+	return C.GoString(cDomain)
+}
 
 //-----------------------------------------------------------------------------
 // strutil.c
