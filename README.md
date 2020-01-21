@@ -4,11 +4,20 @@
 # libjaylink
 Go bindings for the libjaylink library.
 
-What Is It?
+## What Is It?
 
-libjaylink is a C-based library that provides an API for talking to Segger J-Link devices.
+Segger makes J-Link devices. These are USB or network connected JTAG/SWD interfaces.
+Devices: https://www.segger.com/products/debug-probes/j-link/
 
-See: https://gitlab.zapb.de/zapb/libjaylink
-See: https://www.segger.com/products/debug-probes/j-link/
+libjaylink is a C-based library providing an API for controlling J-Link devices.
+This package provides a Go wrapper around the C-library API so you can use the library from Go programs.
 
-This package provides a Go wrapper around the C-library API.
+## Dependencies
+
+ * libjaylink (https://gitlab.zapb.de/zapb/libjaylink/)
+ * libusb-1.0 (https://libusb.info/)
+ 
+## Status
+ 
+ In development.
+ 
