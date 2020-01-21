@@ -28,6 +28,7 @@ import (
 )
 
 //-----------------------------------------------------------------------------
+// Errors
 
 // Error stores C API error codes.
 type Error struct {
@@ -67,6 +68,18 @@ func newError(name string, rc int) *Error {
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("%s failed, %s", e.name, rcString(e.rc))
+}
+
+// StrError returns a human-readable description of the error code.
+func StrError(code int) string {
+	cStr := C.jaylink_strerror(C.int(code))
+	return C.GoString(cStr)
+}
+
+// StrErrorName returns the name of the error code.
+func StrErrorName(code int) string {
+	cStr := C.jaylink_strerror_name(C.int(code))
+	return C.GoString(cStr)
 }
 
 //-----------------------------------------------------------------------------
@@ -302,21 +315,6 @@ func (caps Capabilities) String() string {
 	}
 	return strings.Join(s, "\n")
 }
-
-//-----------------------------------------------------------------------------
-
-// LogLevel is the libjaylink log level.
-type LogLevel uint32
-
-// LogLevel values.
-const (
-	LOG_LEVEL_NONE     LogLevel = C.JAYLINK_LOG_LEVEL_NONE     // no messages
-	LOG_LEVEL_ERROR    LogLevel = C.JAYLINK_LOG_LEVEL_ERROR    // error messages
-	LOG_LEVEL_WARNING  LogLevel = C.JAYLINK_LOG_LEVEL_WARNING  // warnings
-	LOG_LEVEL_INFO     LogLevel = C.JAYLINK_LOG_LEVEL_INFO     // informational messages
-	LOG_LEVEL_DEBUG    LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG    // debug messages
-	LOG_LEVEL_DEBUG_IO LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG_IO // I/O debug messages
-)
 
 //-----------------------------------------------------------------------------
 
@@ -804,12 +802,6 @@ func (ctx *Context) DiscoveryScan(ifaces HostInterface) error {
 // int jaylink_emucom_write(struct jaylink_device_handle *devh, uint32_t channel, const uint8_t *buffer, uint32_t *length);
 
 //-----------------------------------------------------------------------------
-// error.c
-
-// const char *jaylink_strerror(int error_code);
-// const char *jaylink_strerror_name(int error_code);
-
-//-----------------------------------------------------------------------------
 // fileio.c
 
 // int jaylink_file_read(struct jaylink_device_handle *devh, const char *filename, uint8_t *buffer, uint32_t offset, uint32_t *length);
@@ -820,12 +812,94 @@ func (ctx *Context) DiscoveryScan(ifaces HostInterface) error {
 //-----------------------------------------------------------------------------
 // jtag.c
 
-// int jaylink_jtag_io(struct jaylink_device_handle *devh, const uint8_t *tms, const uint8_t *tdi, uint8_t *tdo, uint16_t length, enum jaylink_jtag_version version);
-// int jaylink_jtag_clear_trst(struct jaylink_device_handle *devh);
-// int jaylink_jtag_set_trst(struct jaylink_device_handle *devh);
+// JtagVersion is the JTAG command version.
+type JtagVersion uint32
+
+// JtagVersion values.
+const (
+	JTAG_VERSION_2 JtagVersion = C.JAYLINK_JTAG_VERSION_2 // JTAG command version 2. Obsolete for major hardware version 5 and above, use Version 3.
+	JTAG_VERSION_3 JtagVersion = C.JAYLINK_JTAG_VERSION_3 // JTAG command version 3
+)
+
+// copyBufferGo2C copies a Go []byte buffer to a C uint8_t buffer.
+// Call freeBuffer on the returned C buffer.
+func copyBufferGo2C(buf []byte) *C.uint8_t {
+	return (*C.uint8_t)(unsafe.Pointer(C.CString(string(buf))))
+}
+
+// copyBufferC2Go copies a C uint8_t buffer to a Go []byte buffer.
+func copyBufferC2Go(buf *C.uint8_t, n int) []byte {
+	x := (*[1 << 30]C.uint8_t)(unsafe.Pointer(buf))
+	goBuf := make([]byte, n)
+	for i := range goBuf {
+		goBuf[i] = byte(x[i])
+	}
+	return goBuf
+}
+
+// allocBuffer allocates a C uint8_t buffer of length n bytes.
+// Call freeBuffer on the returned C buffer.
+func allocBuffer(n int) *C.uint8_t {
+	return (*C.uint8_t)(C.malloc(C.ulong(n)))
+}
+
+// freeBuffer frees a C uint8_t buffer.
+func freeBuffer(buf *C.uint8_t) {
+	C.free(unsafe.Pointer(buf))
+}
+
+// JtagIO performs a JTAG I/O operation.
+func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, error) {
+	n := len(tms)
+	if len(tdi) != n {
+		panic("len(tms) != len(tdi)")
+	}
+	cTms := copyBufferGo2C(tms)
+	defer freeBuffer(cTms)
+	cTdi := copyBufferGo2C(tdi)
+	defer freeBuffer(cTdi)
+	cTdo := allocBuffer(n)
+	defer freeBuffer(cTdo)
+	rc := int(C.jaylink_jtag_io(hdl.hdl, cTms, cTdi, cTdo, C.uint16_t(n), uint32(version)))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_jtag_io", rc)
+	}
+	return copyBufferC2Go(cTdo, n), nil
+}
+
+// JtagClearTrst clears the JTAG test reset (TRST) signal.
+func (hdl *DeviceHandle) JtagClearTrst() error {
+	rc := int(C.jaylink_jtag_clear_trst(hdl.hdl))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_jtag_clear_trst", rc)
+	}
+	return nil
+}
+
+// JtagSetTrst sets the JTAG test reset (TRST) signal.
+func (hdl *DeviceHandle) JtagSetTrst() error {
+	rc := int(C.jaylink_jtag_set_trst(hdl.hdl))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_jtag_set_trst", rc)
+	}
+	return nil
+}
 
 //-----------------------------------------------------------------------------
-// log.c
+// Logging
+
+// LogLevel is the log level.
+type LogLevel uint32
+
+// LogLevel values.
+const (
+	LOG_LEVEL_NONE     LogLevel = C.JAYLINK_LOG_LEVEL_NONE     // no messages
+	LOG_LEVEL_ERROR    LogLevel = C.JAYLINK_LOG_LEVEL_ERROR    // error messages
+	LOG_LEVEL_WARNING  LogLevel = C.JAYLINK_LOG_LEVEL_WARNING  // warnings
+	LOG_LEVEL_INFO     LogLevel = C.JAYLINK_LOG_LEVEL_INFO     // informational messages
+	LOG_LEVEL_DEBUG    LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG    // debug messages
+	LOG_LEVEL_DEBUG_IO LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG_IO // I/O debug messages
+)
 
 // LogSetLevel sets the log level.
 func (ctx *Context) LogSetLevel(level LogLevel) error {
@@ -872,11 +946,6 @@ func (ctx *Context) LogGetDomain() string {
 	cDomain := C.jaylink_log_get_domain(ctx.ctx)
 	return C.GoString(cDomain)
 }
-
-//-----------------------------------------------------------------------------
-// strutil.c
-
-// int jaylink_parse_serial_number(const char *str, uint32_t *serial_number);
 
 //-----------------------------------------------------------------------------
 // swd.c
