@@ -51,7 +51,22 @@ func main() {
 
 	fmt.Printf("%d devices found\n", len(dev))
 	for i := range dev {
-		fmt.Printf("%d: %s\n", i, &dev[i])
+		fmt.Printf("device %d: %s\n", i, &dev[i])
+
+		hdl, err := dev[i].Open()
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			continue
+		}
+
+		fmt.Printf("%s\n", hdl)
+
+		err = hdl.Close()
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			continue
+		}
+
 	}
 
 	ctx.FreeDevices(dev, true)
