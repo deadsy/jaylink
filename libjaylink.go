@@ -1,15 +1,15 @@
 //-----------------------------------------------------------------------------
 /*
 
-C-Go glue to the C-based libjaylink library.
+Go bindings for the libjaylink library.
+
+See: https://github.com/deadsy/libjaylink
 See: https://gitlab.zapb.de/zapb/libjaylink
 
 */
 //-----------------------------------------------------------------------------
 
 package libjaylink
-
-//-----------------------------------------------------------------------------
 
 /*
 #cgo pkg-config: libusb-1.0
@@ -26,6 +26,42 @@ import (
 	"strings"
 	"unsafe"
 )
+
+//-----------------------------------------------------------------------------
+// utility functions
+
+// go2cBuffer creates a C uint8_t buffer from a Go []byte buffer.
+// Call freeBuffer on the returned C buffer.
+func go2cBuffer(buf []byte) *C.uint8_t {
+	return (*C.uint8_t)(unsafe.Pointer(C.CString(string(buf))))
+}
+
+// c2goBuffer creates a Go []byte buffer from a C uint8_t buffer.
+func c2goBuffer(buf *C.uint8_t, n int) []byte {
+	x := (*[1 << 30]byte)(unsafe.Pointer(buf))
+	goBuf := make([]byte, n)
+	copy(goBuf, x[:])
+	return goBuf
+}
+
+// allocBuffer allocates a C uint8_t buffer of length n bytes.
+// Call freeBuffer on the returned C buffer.
+func allocBuffer(n int) *C.uint8_t {
+	return (*C.uint8_t)(C.malloc(C.size_t(n)))
+}
+
+// freeBuffer frees a C uint8_t buffer.
+func freeBuffer(buf *C.uint8_t) {
+	C.free(unsafe.Pointer(buf))
+}
+
+// boolToInt converts a boolean to an int.
+func boolToInt(x bool) int {
+	if x {
+		return 1
+	}
+	return 0
+}
 
 //-----------------------------------------------------------------------------
 // Errors
@@ -168,13 +204,6 @@ const (
 )
 
 //-----------------------------------------------------------------------------
-
-func boolToInt(x bool) int {
-	if x {
-		return 1
-	}
-	return 0
-}
 
 // HardwareStatus stores the device hardware status.
 type HardwareStatus struct {
@@ -544,18 +573,13 @@ func (dev *Device) GetIPv4Address() (string, error) {
 
 // GetMacAddress gets the MAC address of a device.
 func (dev *Device) GetMacAddress() (net.HardwareAddr, error) {
-	mac := (*C.uint8_t)(C.malloc(C.JAYLINK_MAC_ADDRESS_LENGTH))
-	defer C.free(unsafe.Pointer(mac))
+	mac := allocBuffer(C.JAYLINK_MAC_ADDRESS_LENGTH)
+	defer freeBuffer(mac)
 	rc := int(C.jaylink_device_get_mac_address(dev.dev, mac))
 	if rc != C.JAYLINK_OK {
 		return nil, newError("jaylink_device_get_mac_address", rc)
 	}
-	m := (*[1 << 30]C.uint8_t)(unsafe.Pointer(mac))
-	macAddr := make([]byte, C.JAYLINK_MAC_ADDRESS_LENGTH)
-	for i := range macAddr {
-		macAddr[i] = byte(m[i])
-	}
-	return macAddr, nil
+	return c2goBuffer(mac, C.JAYLINK_MAC_ADDRESS_LENGTH), nil
 }
 
 // GetHardwareVersion gets the hardware version of a device.
@@ -821,50 +845,23 @@ const (
 	JTAG_VERSION_3 JtagVersion = C.JAYLINK_JTAG_VERSION_3 // JTAG command version 3
 )
 
-// copyBufferGo2C copies a Go []byte buffer to a C uint8_t buffer.
-// Call freeBuffer on the returned C buffer.
-func copyBufferGo2C(buf []byte) *C.uint8_t {
-	return (*C.uint8_t)(unsafe.Pointer(C.CString(string(buf))))
-}
-
-// copyBufferC2Go copies a C uint8_t buffer to a Go []byte buffer.
-func copyBufferC2Go(buf *C.uint8_t, n int) []byte {
-	x := (*[1 << 30]C.uint8_t)(unsafe.Pointer(buf))
-	goBuf := make([]byte, n)
-	for i := range goBuf {
-		goBuf[i] = byte(x[i])
-	}
-	return goBuf
-}
-
-// allocBuffer allocates a C uint8_t buffer of length n bytes.
-// Call freeBuffer on the returned C buffer.
-func allocBuffer(n int) *C.uint8_t {
-	return (*C.uint8_t)(C.malloc(C.ulong(n)))
-}
-
-// freeBuffer frees a C uint8_t buffer.
-func freeBuffer(buf *C.uint8_t) {
-	C.free(unsafe.Pointer(buf))
-}
-
 // JtagIO performs a JTAG I/O operation.
 func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, error) {
 	n := len(tms)
 	if len(tdi) != n {
 		panic("len(tms) != len(tdi)")
 	}
-	cTms := copyBufferGo2C(tms)
-	defer freeBuffer(cTms)
-	cTdi := copyBufferGo2C(tdi)
-	defer freeBuffer(cTdi)
+	cTms := go2cBuffer(tms)
+	cTdi := go2cBuffer(tdi)
 	cTdo := allocBuffer(n)
+	defer freeBuffer(cTms)
+	defer freeBuffer(cTdi)
 	defer freeBuffer(cTdo)
 	rc := int(C.jaylink_jtag_io(hdl.hdl, cTms, cTdi, cTdo, C.uint16_t(n), uint32(version)))
 	if rc != C.JAYLINK_OK {
 		return nil, newError("jaylink_jtag_io", rc)
 	}
-	return copyBufferC2Go(cTdo, n), nil
+	return c2goBuffer(cTdo, n), nil
 }
 
 // JtagClearTrst clears the JTAG test reset (TRST) signal.
