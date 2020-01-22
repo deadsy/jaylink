@@ -12,22 +12,39 @@ See: https://gitlab.zapb.de/zapb/libjaylink
 package libjaylink
 
 /*
+#cgo linux LDFLAGS: -Wl,-unresolved-symbols=ignore-all
+#cgo darwin LDFLAGS: -Wl,-undefined,dynamic_lookup
 #cgo pkg-config: libusb-1.0
 #cgo pkg-config: libjaylink
 #include <libjaylink/libjaylink.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 // Go won't allow the "type" field, so this is a C-wrapper.
 uint32_t get_hw_type(struct jaylink_hardware_version *h) {
   return (uint32_t)h->type;
 }
+
+extern void goLogCallback(const struct jaylink_context *ctx, char *msg);
+
+int LogCallback(const struct jaylink_context *ctx, enum jaylink_log_level level, const char *format, va_list args, void *user_data) {
+  // check the log level
+  enum jaylink_log_level log_level;
+  jaylink_log_get_level(ctx, &log_level);
+  if (level > log_level) {
+    return 0;
+  }
+  char msg[128];
+  vsnprintf(msg, sizeof(msg), format, args);
+  goLogCallback((void *)ctx, msg);
+  return 0;
+}
+
 */
 import "C"
 
 import (
 	"fmt"
-	"math/bits"
-	"net"
 	"strings"
 	"unsafe"
 )
@@ -71,6 +88,18 @@ func boolToInt(x bool) int {
 		return 1
 	}
 	return 0
+}
+
+// onesCount32 returns the number of 1's in a uint32.
+func onesCount32(x uint32) int {
+	i := 0
+	for x != 0 {
+		if x&1 != 0 {
+			i++
+		}
+		x >>= 1
+	}
+	return i
 }
 
 //-----------------------------------------------------------------------------
@@ -243,7 +272,7 @@ func (hdl *DeviceHandle) GetHardwareInfo(mask HardwareInfo) ([]uint32, error) {
 	if rc != C.JAYLINK_OK {
 		return nil, newError("jaylink_get_hardware_info", rc)
 	}
-	info := make([]uint32, bits.OnesCount32(uint32(mask)))
+	info := make([]uint32, onesCount32(uint32(mask)))
 	x := (*[1 << 30]C.uint32_t)(unsafe.Pointer(cInfo))
 	for i := range info {
 		info[i] = uint32(x[i])
@@ -270,7 +299,7 @@ func (hdl *DeviceHandle) GetCounters(mask Counter) ([]uint32, error) {
 	if rc != C.JAYLINK_OK {
 		return nil, newError("jaylink_get_counters", rc)
 	}
-	values := make([]uint32, bits.OnesCount32(uint32(mask)))
+	values := make([]uint32, onesCount32(uint32(mask)))
 	x := (*[1 << 30]C.uint32_t)(unsafe.Pointer(cValues))
 	for i := range values {
 		values[i] = uint32(x[i])
@@ -666,7 +695,7 @@ func (dev *Device) GetIPv4Address() (string, error) {
 }
 
 // GetMacAddress gets the MAC address of a device.
-func (dev *Device) GetMacAddress() (net.HardwareAddr, error) {
+func (dev *Device) GetMacAddress() ([]byte, error) {
 	mac := allocBuffer(C.JAYLINK_MAC_ADDRESS_LENGTH)
 	defer freeBuffer(mac)
 	rc := int(C.jaylink_device_get_mac_address(dev.dev, mac))
@@ -1059,6 +1088,13 @@ const (
 	LOG_LEVEL_DEBUG_IO LogLevel = C.JAYLINK_LOG_LEVEL_DEBUG_IO // I/O debug messages
 )
 
+// LogFunc is a logging callback function.
+type LogFunc func(domain, msg string) error
+
+// export goLogCallback
+func goLogCallback(ctx *C.struct_jaylink_context, msg *C.char) {
+}
+
 // LogSetLevel sets the log level.
 func (ctx *Context) LogSetLevel(level LogLevel) error {
 	var cLevel uint32
@@ -1079,14 +1115,14 @@ func (ctx *Context) LogGetLevel() (LogLevel, error) {
 	return LogLevel(cLevel), nil
 }
 
-/*
-
-// LogSetCallback sets the log callback function.
-func (ctx *Context) LogSetCallback() error {
-  rc := int(C.jaylink_log_set_callback(ctx.ctx, jaylink_log_callback callback, void *user_data))
+// LogSetCallback sets the logging callback function.
+func (ctx *Context) LogSetCallback(cb LogFunc) error {
+	rc := int(C.jaylink_log_set_callback(ctx.ctx, C.jaylink_log_callback(C.LogCallback), nil))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_log_set_callback", rc)
+	}
+	return nil
 }
-
-*/
 
 // LogSetDomain sets the log domain.
 func (ctx *Context) LogSetDomain(domain string) error {
