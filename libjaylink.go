@@ -82,29 +82,6 @@ type Error struct {
 	rc   int    // C return code
 }
 
-func rcString(rc int) string {
-	rcStrings := map[int]string{
-		C.JAYLINK_OK:                    "no error",
-		C.JAYLINK_ERR:                   "unspecified error",
-		C.JAYLINK_ERR_ARG:               "invalid argument",
-		C.JAYLINK_ERR_MALLOC:            "memory allocation error",
-		C.JAYLINK_ERR_TIMEOUT:           "timeout occurred",
-		C.JAYLINK_ERR_PROTO:             "protocol violation",
-		C.JAYLINK_ERR_NOT_AVAILABLE:     "entity not available",
-		C.JAYLINK_ERR_NOT_SUPPORTED:     "operation not supported",
-		C.JAYLINK_ERR_IO:                "input/output error",
-		C.JAYLINK_ERR_DEV:               "device: unspecified error",
-		C.JAYLINK_ERR_DEV_NOT_SUPPORTED: "device: operation not supported",
-		C.JAYLINK_ERR_DEV_NOT_AVAILABLE: "device: entity not available",
-		C.JAYLINK_ERR_DEV_NO_MEMORY:     "device: not enough memory to perform operation",
-	}
-	s, ok := rcStrings[rc]
-	if !ok {
-		return fmt.Sprintf("unknown(%d)", rc)
-	}
-	return s
-}
-
 func newError(name string, rc int) *Error {
 	return &Error{
 		name: name,
@@ -113,7 +90,7 @@ func newError(name string, rc int) *Error {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("%s failed, %s", e.name, rcString(e.rc))
+	return fmt.Sprintf("%s failed, %s", e.name, StrError(e.rc))
 }
 
 // StrError returns a human-readable description of the error code.
@@ -157,12 +134,19 @@ type HardwareType uint32
 
 // HardwareType values.
 const (
+	// libjaylink values
 	HW_TYPE_JLINK     HardwareType = C.JAYLINK_HW_TYPE_JLINK
 	HW_TYPE_FLASHER   HardwareType = C.JAYLINK_HW_TYPE_FLASHER
 	HW_TYPE_JLINK_PRO HardwareType = C.JAYLINK_HW_TYPE_JLINK_PRO
+	// other values
+	HW_TYPE_JTRACE             HardwareType = 1
+	HW_TYPE_JLINK_LITE_ADI     HardwareType = 5
+	HW_TYPE_JLINK_LITE_XMC4000 HardwareType = 16
+	HW_TYPE_JLINK_LITE_XMC4200 HardwareType = 17
+	HW_TYPE_LPCLINK2           HardwareType = 18
 )
 
-// HardwareVersion stores the Segger hardware version.
+// HardwareVersion stores the Segger hardware type/version.
 type HardwareVersion struct {
 	hwtype   HardwareType
 	major    uint8
@@ -171,7 +155,16 @@ type HardwareVersion struct {
 }
 
 func (h HardwareVersion) String() string {
-	s := map[HardwareType]string{HW_TYPE_JLINK: "jlink", HW_TYPE_FLASHER: "flasher", HW_TYPE_JLINK_PRO: "jlinkpro"}
+	s := map[HardwareType]string{
+		HW_TYPE_JLINK:              "J-link",
+		HW_TYPE_FLASHER:            "Flasher",
+		HW_TYPE_JLINK_PRO:          "J-Link Pro",
+		HW_TYPE_JTRACE:             "J-Trace",
+		HW_TYPE_JLINK_LITE_ADI:     "J-Link Lite-ADI",
+		HW_TYPE_JLINK_LITE_XMC4000: "J-Link Lite-XMC4000",
+		HW_TYPE_JLINK_LITE_XMC4200: "J-Link Lite-XMC4200",
+		HW_TYPE_LPCLINK2:           "J-Link on LPC-Link2",
+	}
 	return fmt.Sprintf("%s %d.%d.%d", s[h.hwtype], h.major, h.minor, h.revision)
 }
 
@@ -260,17 +253,17 @@ func (hdl *DeviceHandle) GetHardwareInfo(mask HardwareInfo) ([]uint32, error) {
 
 //-----------------------------------------------------------------------------
 
-// CounterMask is a device counter bitmask.
-type CounterMask uint32
+// Counter is a device counter bitmask.
+type Counter uint32
 
 // CounterMask values.
 const (
-	COUNTER_TARGET_TIME        CounterMask = C.JAYLINK_COUNTER_TARGET_TIME        // Time the device is connected to a target in milliseconds.
-	COUNTER_TARGET_CONNECTIONS CounterMask = C.JAYLINK_COUNTER_TARGET_CONNECTIONS // Number of times the device was connected or disconnected from a target.
+	COUNTER_TARGET_TIME        Counter = C.JAYLINK_COUNTER_TARGET_TIME        // Time the device is connected to a target in milliseconds.
+	COUNTER_TARGET_CONNECTIONS Counter = C.JAYLINK_COUNTER_TARGET_CONNECTIONS // Number of times the device was connected or disconnected from a target.
 )
 
 // GetCounters retrieves the counter values of a device.
-func (hdl *DeviceHandle) GetCounters(mask CounterMask) ([]uint32, error) {
+func (hdl *DeviceHandle) GetCounters(mask Counter) ([]uint32, error) {
 	cValues := (*C.uint32_t)(C.malloc(32 * C.sizeof_uint32_t))
 	defer C.free(unsafe.Pointer(cValues))
 	rc := int(C.jaylink_get_counters(hdl.hdl, C.uint32_t(mask), cValues))
@@ -923,16 +916,83 @@ func (ctx *Context) DiscoveryScan(ifaces HostInterface) error {
 //-----------------------------------------------------------------------------
 // emucom.c
 
-// int jaylink_emucom_read(struct jaylink_device_handle *devh, uint32_t channel, uint8_t *buffer, uint32_t *length);
-// int jaylink_emucom_write(struct jaylink_device_handle *devh, uint32_t channel, const uint8_t *buffer, uint32_t *length);
+// EmuComRead reads from an EMUCOM channel.
+func (hdl *DeviceHandle) EmuComRead(channel uint32, length int) ([]byte, error) {
+	cBuffer := allocBuffer(length)
+	defer freeBuffer(cBuffer)
+	cLength := C.uint32_t(length)
+	rc := int(C.jaylink_emucom_read(hdl.hdl, C.uint32_t(channel), cBuffer, &cLength))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_emucom_read", rc)
+	}
+	return c2goSlice(cBuffer, int(cLength)), nil
+}
+
+// EmuComWrite writes to an EMUCOM channel.
+func (hdl *DeviceHandle) EmuComWrite(channel uint32, buffer []byte) (int, error) {
+	cBuffer := go2cBuffer(buffer)
+	defer freeBuffer(cBuffer)
+	cLength := C.uint32_t(len(buffer))
+	rc := int(C.jaylink_emucom_write(hdl.hdl, C.uint32_t(channel), cBuffer, &cLength))
+	if rc != C.JAYLINK_OK {
+		return 0, newError("jaylink_emucom_write", rc)
+	}
+	return int(cLength), nil
+}
 
 //-----------------------------------------------------------------------------
 // fileio.c
 
-// int jaylink_file_read(struct jaylink_device_handle *devh, const char *filename, uint8_t *buffer, uint32_t offset, uint32_t *length);
-// int jaylink_file_write(struct jaylink_device_handle *devh, const char *filename, const uint8_t *buffer, uint32_t offset, uint32_t *length);
-// int jaylink_file_get_size(struct jaylink_device_handle *devh, const char *filename, uint32_t *size);
-// int jaylink_file_delete(struct jaylink_device_handle *devh, const char *filename);
+// FileRead reads from a file.
+func (hdl *DeviceHandle) FileRead(filename string, offset uint32, length int) ([]byte, error) {
+	cFilename := C.CString(filename)
+	defer C.free(unsafe.Pointer(cFilename))
+	cBuffer := allocBuffer(length)
+	defer freeBuffer(cBuffer)
+	cLength := C.uint32_t(length)
+	rc := int(C.jaylink_file_read(hdl.hdl, cFilename, cBuffer, C.uint32_t(offset), &cLength))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_file_read", rc)
+	}
+	return c2goSlice(cBuffer, int(cLength)), nil
+}
+
+// FileWrite writes to a file.
+func (hdl *DeviceHandle) FileWrite(filename string, buffer []byte, offset uint32) (int, error) {
+	cFilename := C.CString(filename)
+	defer C.free(unsafe.Pointer(cFilename))
+	cBuffer := go2cBuffer(buffer)
+	defer freeBuffer(cBuffer)
+	cLength := C.uint32_t(len(buffer))
+	rc := int(C.jaylink_file_write(hdl.hdl, cFilename, cBuffer, C.uint32_t(offset), &cLength))
+	if rc != C.JAYLINK_OK {
+		return 0, newError("jaylink_file_write", rc)
+	}
+	return int(cLength), nil
+}
+
+// FileGetSize retrieves the size of a file.
+func (hdl *DeviceHandle) FileGetSize(filename string) (uint32, error) {
+	cFilename := C.CString(filename)
+	defer C.free(unsafe.Pointer(cFilename))
+	var cSize C.uint32_t
+	rc := int(C.jaylink_file_get_size(hdl.hdl, cFilename, &cSize))
+	if rc != C.JAYLINK_OK {
+		return 0, newError("jaylink_file_get_size", rc)
+	}
+	return uint32(cSize), nil
+}
+
+// FileDelete deletes a file.
+func (hdl *DeviceHandle) FileDelete(filename string) error {
+	cFilename := C.CString(filename)
+	defer C.free(unsafe.Pointer(cFilename))
+	rc := int(C.jaylink_file_delete(hdl.hdl, cFilename))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_file_delete", rc)
+	}
+	return nil
+}
 
 //-----------------------------------------------------------------------------
 // jtag.c
@@ -1048,15 +1108,91 @@ func (ctx *Context) LogGetDomain() string {
 //-----------------------------------------------------------------------------
 // swd.c
 
-// int jaylink_swd_io(struct jaylink_device_handle *devh, const uint8_t *direction, const uint8_t *out, uint8_t *in, uint16_t length);
+// SwdIO performs a SWD I/O operation.
+func (hdl *DeviceHandle) SwdIO(direction, out []byte) ([]byte, error) {
+	n := len(direction)
+	if len(out) != n {
+		panic("len(direction) != len(out)")
+	}
+	cDirection := go2cBuffer(direction)
+	cOut := go2cBuffer(out)
+	cIn := allocBuffer(n)
+	defer freeBuffer(cDirection)
+	defer freeBuffer(cOut)
+	defer freeBuffer(cIn)
+	rc := int(C.jaylink_swd_io(hdl.hdl, cDirection, cOut, cIn, C.uint16_t(n)))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_swd_io", rc)
+	}
+	return c2goSlice(cIn, n), nil
+}
 
 //-----------------------------------------------------------------------------
 // swo.c
 
-// int jaylink_swo_start(struct jaylink_device_handle *devh, enum jaylink_swo_mode mode, uint32_t baudrate, uint32_t size);
-// int jaylink_swo_stop(struct jaylink_device_handle *devh);
-// int jaylink_swo_read(struct jaylink_device_handle *devh, uint8_t *buffer, uint32_t *length);
-// int jaylink_swo_get_speeds(struct jaylink_device_handle *devh, enum jaylink_swo_mode mode, struct jaylink_swo_speed *speed);
+// SwoMode is the Serial Wire Output (SWO) capture mode.
+type SwoMode uint32
+
+// SwoMode values.
+const (
+	SWO_MODE_UART SwoMode = C.JAYLINK_SWO_MODE_UART // Universal Asynchronous Receiver Transmitter (UART).
+)
+
+// SwoSpeed store Serial Wire Output (SWO) speed information.
+type SwoSpeed struct {
+	Freq         uint32 // Base frequency in Hz
+	MinDiv       uint32 // Minimum frequency divider
+	MaxDiv       uint32 // Maximum frequency divider
+	MinPrescaler uint32 // Minimum prescaler
+	MaxPrescaler uint32 // Maximum prescaler
+}
+
+// SwoStart starts SWO capture.
+func (hdl *DeviceHandle) SwoStart(mode SwoMode, baudrate, size uint32) error {
+	rc := int(C.jaylink_swo_start(hdl.hdl, uint32(mode), C.uint32_t(baudrate), C.uint32_t(size)))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_swo_start", rc)
+	}
+	return nil
+}
+
+// SwoStop stops SWO capture.
+func (hdl *DeviceHandle) SwoStop() error {
+	rc := int(C.jaylink_swo_stop(hdl.hdl))
+	if rc != C.JAYLINK_OK {
+		return newError("jaylink_swo_stop", rc)
+	}
+	return nil
+}
+
+// SwoRead reads SWO trace data.
+func (hdl *DeviceHandle) SwoRead(length int) ([]byte, error) {
+	cLength := C.uint32_t(length)
+	cBuffer := allocBuffer(length)
+	defer freeBuffer(cBuffer)
+	rc := int(C.jaylink_swo_read(hdl.hdl, cBuffer, &cLength))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_swo_read", rc)
+	}
+	return c2goSlice(cBuffer, int(cLength)), nil
+}
+
+// SwoGetSpeeds retrieves SWO speeds.
+func (hdl *DeviceHandle) SwoGetSpeeds(mode SwoMode) (*SwoSpeed, error) {
+	var cSpeed C.struct_jaylink_swo_speed
+	rc := int(C.jaylink_swo_get_speeds(hdl.hdl, uint32(mode), &cSpeed))
+	if rc != C.JAYLINK_OK {
+		return nil, newError("jaylink_swo_get_speeds", rc)
+	}
+	speed := SwoSpeed{
+		Freq:         uint32(cSpeed.freq),
+		MinDiv:       uint32(cSpeed.min_div),
+		MaxDiv:       uint32(cSpeed.max_div),
+		MinPrescaler: uint32(cSpeed.min_prescaler),
+		MaxPrescaler: uint32(cSpeed.max_prescaler),
+	}
+	return &speed, nil
+}
 
 //-----------------------------------------------------------------------------
 // target.c
