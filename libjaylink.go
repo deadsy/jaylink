@@ -88,13 +88,14 @@ func onesCount32(x uint32) int {
 //-----------------------------------------------------------------------------
 // Errors
 
-// Error stores C API error codes.
+// Error stores error information.
 type Error struct {
 	Name string // function name
 	Code int    // C return code
 }
 
-func newError(name string, rc int) *Error {
+// apiError returns an C-API error.
+func apiError(name string, rc int) *Error {
 	return &Error{
 		Name: name,
 		Code: rc,
@@ -119,10 +120,12 @@ func StrErrorName(code int) string {
 
 //-----------------------------------------------------------------------------
 
-// HostInterface stores the host interface type.
+// HostInterface is the host interface bitmap.
+// When used for device discovery multiple bits are set.
+// When used for specific devices one bit is set for the interface type.
 type HostInterface uint32
 
-// HostInterface values.
+// HostInterface bitmap values.
 const (
 	HIF_USB HostInterface = C.JAYLINK_HIF_USB
 	HIF_TCP HostInterface = C.JAYLINK_HIF_TCP
@@ -136,12 +139,25 @@ func (h HostInterface) String() string {
 	if h&HIF_TCP != 0 {
 		s = append(s, "tcp")
 	}
-	return strings.Join(s, ",")
+	if len(s) != 0 {
+		return strings.Join(s, ",")
+	}
+	return "unknown"
+}
+
+// GetHostInterface gets the host interface of a device.
+func (dev *Device) GetHostInterface() (HostInterface, error) {
+	var iface uint32
+	rc := int(C.jaylink_device_get_host_interface(dev.dev, &iface))
+	if rc != C.JAYLINK_OK {
+		return 0, apiError("jaylink_device_get_host_interface", rc)
+	}
+	return HostInterface(iface), nil
 }
 
 //-----------------------------------------------------------------------------
 
-// HardwareType stores the Segger hardware type.
+// HardwareType is the device hardware type.
 type HardwareType uint32
 
 // HardwareType values.
@@ -158,16 +174,8 @@ const (
 	HW_TYPE_LPCLINK2           HardwareType = 18
 )
 
-// HardwareVersion stores the Segger hardware type/version.
-type HardwareVersion struct {
-	Hwtype   HardwareType
-	Major    uint8
-	Minor    uint8
-	Revision uint8
-}
-
-func (h HardwareVersion) String() string {
-	s := map[HardwareType]string{
+func (h HardwareType) String() string {
+	names := map[HardwareType]string{
 		HW_TYPE_JLINK:              "J-link",
 		HW_TYPE_FLASHER:            "Flasher",
 		HW_TYPE_JLINK_PRO:          "J-Link Pro",
@@ -177,7 +185,24 @@ func (h HardwareVersion) String() string {
 		HW_TYPE_JLINK_LITE_XMC4200: "J-Link Lite-XMC4200",
 		HW_TYPE_LPCLINK2:           "J-Link on LPC-Link2",
 	}
-	return fmt.Sprintf("%s %d.%d.%d", s[h.Hwtype], h.Major, h.Minor, h.Revision)
+	if s, ok := names[h]; ok {
+		return s
+	}
+	return "unknown"
+}
+
+//-----------------------------------------------------------------------------
+
+// HardwareVersion is the hardware type and version.
+type HardwareVersion struct {
+	Hwtype   HardwareType
+	Major    uint8
+	Minor    uint8
+	Revision uint8
+}
+
+func (h HardwareVersion) String() string {
+	return fmt.Sprintf("%s %d.%d.%d", h.Hwtype, h.Major, h.Minor, h.Revision)
 }
 
 func c2goHardwareVersion(hw *C.struct_jaylink_hardware_version) *HardwareVersion {
@@ -194,7 +219,7 @@ func (dev *Device) GetHardwareVersion() (*HardwareVersion, error) {
 	var hw C.struct_jaylink_hardware_version
 	rc := int(C.jaylink_device_get_hardware_version(dev.dev, &hw))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_device_get_hardware_version", rc)
+		return nil, apiError("jaylink_device_get_hardware_version", rc)
 	}
 	return c2goHardwareVersion(&hw), nil
 }
@@ -204,14 +229,14 @@ func (hdl *DeviceHandle) GetHardwareVersion() (*HardwareVersion, error) {
 	var hw C.struct_jaylink_hardware_version
 	rc := int(C.jaylink_get_hardware_version(hdl.hdl, &hw))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_hardware_version", rc)
+		return nil, apiError("jaylink_get_hardware_version", rc)
 	}
 	return c2goHardwareVersion(&hw), nil
 }
 
 //-----------------------------------------------------------------------------
 
-// UsbAddress stores the USB address number (PID).
+// UsbAddress stores the USB address number (Product ID).
 type UsbAddress uint32
 
 // UsbAddress values.
@@ -223,12 +248,26 @@ const (
 )
 
 func (u UsbAddress) String() string {
-	return map[UsbAddress]string{
+	names := map[UsbAddress]string{
 		USB_ADDRESS_0: "0x0101",
 		USB_ADDRESS_1: "0x0102",
 		USB_ADDRESS_2: "0x0103",
 		USB_ADDRESS_3: "0x0104",
-	}[u]
+	}
+	if s, ok := names[u]; ok {
+		return s
+	}
+	return "unknown"
+}
+
+// GetUsbAddress gets the USB address of a device.
+func (dev *Device) GetUsbAddress() (UsbAddress, error) {
+	var usbAddress uint32
+	rc := int(C.jaylink_device_get_usb_address(dev.dev, &usbAddress))
+	if rc != C.JAYLINK_OK {
+		return 0, apiError("jaylink_device_get_usb_address", rc)
+	}
+	return UsbAddress(usbAddress), nil
 }
 
 //-----------------------------------------------------------------------------
@@ -236,7 +275,7 @@ func (u UsbAddress) String() string {
 // HardwareInfo is a hardware information bitmap.
 type HardwareInfo uint32
 
-// HardwareInfo bit values.
+// HardwareInfo bitmap values.
 const (
 	HW_INFO_TARGET_POWER HardwareInfo = C.JAYLINK_HW_INFO_TARGET_POWER
 	HW_INFO_ITARGET      HardwareInfo = C.JAYLINK_HW_INFO_ITARGET
@@ -253,7 +292,7 @@ func (hdl *DeviceHandle) GetHardwareInfo(mask HardwareInfo) ([]uint32, error) {
 	defer C.free(unsafe.Pointer(cInfo))
 	rc := int(C.jaylink_get_hardware_info(hdl.hdl, C.uint32_t(mask), cInfo))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_hardware_info", rc)
+		return nil, apiError("jaylink_get_hardware_info", rc)
 	}
 	info := make([]uint32, onesCount32(uint32(mask)))
 	x := (*[1 << 30]C.uint32_t)(unsafe.Pointer(cInfo))
@@ -265,10 +304,10 @@ func (hdl *DeviceHandle) GetHardwareInfo(mask HardwareInfo) ([]uint32, error) {
 
 //-----------------------------------------------------------------------------
 
-// Counter is a device counter bitmask.
+// Counter is a device counters bitmap.
 type Counter uint32
 
-// CounterMask values.
+// Counter bitmap values.
 const (
 	COUNTER_TARGET_TIME        Counter = C.JAYLINK_COUNTER_TARGET_TIME        // Time the device is connected to a target in milliseconds.
 	COUNTER_TARGET_CONNECTIONS Counter = C.JAYLINK_COUNTER_TARGET_CONNECTIONS // Number of times the device was connected or disconnected from a target.
@@ -280,7 +319,7 @@ func (hdl *DeviceHandle) GetCounters(mask Counter) ([]uint32, error) {
 	defer C.free(unsafe.Pointer(cValues))
 	rc := int(C.jaylink_get_counters(hdl.hdl, C.uint32_t(mask), cValues))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_counters", rc)
+		return nil, apiError("jaylink_get_counters", rc)
 	}
 	values := make([]uint32, onesCount32(uint32(mask)))
 	x := (*[1 << 30]C.uint32_t)(unsafe.Pointer(cValues))
@@ -305,7 +344,7 @@ type HardwareStatus struct {
 
 func (hs *HardwareStatus) String() string {
 	s := []string{}
-	s = append(s, fmt.Sprintf("target_voltage %d", hs.TargetVoltage))
+	s = append(s, fmt.Sprintf("target voltage %d mV,", hs.TargetVoltage))
 	s = append(s, fmt.Sprintf("tck %d", boolToInt(hs.Tck)))
 	s = append(s, fmt.Sprintf("tdi %d", boolToInt(hs.Tdi)))
 	s = append(s, fmt.Sprintf("tdo %d", boolToInt(hs.Tdo)))
@@ -320,7 +359,7 @@ func (hdl *DeviceHandle) GetHardwareStatus() (*HardwareStatus, error) {
 	var cStatus C.struct_jaylink_hardware_status
 	rc := int(C.jaylink_get_hardware_status(hdl.hdl, &cStatus))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_hardware_status", rc)
+		return nil, apiError("jaylink_get_hardware_status", rc)
 	}
 	status := HardwareStatus{
 		TargetVoltage: uint16(cStatus.target_voltage),
@@ -335,6 +374,7 @@ func (hdl *DeviceHandle) GetHardwareStatus() (*HardwareStatus, error) {
 }
 
 //-----------------------------------------------------------------------------
+// Capabilities
 
 // Capabilities is a bitmap of device capabilities.
 type Capabilities []byte
@@ -361,7 +401,7 @@ const (
 	DEV_CAP_GET_EXT_CAPS      DeviceCapability = C.JAYLINK_DEV_CAP_GET_EXT_CAPS
 	DEV_CAP_EMUCOM            DeviceCapability = C.JAYLINK_DEV_CAP_EMUCOM
 	DEV_CAP_ETHERNET          DeviceCapability = C.JAYLINK_DEV_CAP_ETHERNET
-	// from jlink docs
+	// from Segger J-Link docs
 	DEV_CAP_RESERVED_1         DeviceCapability = 0
 	DEV_CAP_WRITE_DCC          DeviceCapability = 2
 	DEV_CAP_TRACE              DeviceCapability = 6
@@ -421,11 +461,10 @@ func (dc DeviceCapability) String() string {
 		DEV_CAP_TEST_NET_SPEED:     "DEV_CAP_TEST_NET_SPEED",
 		DEV_CAP_RAWTRACE:           "DEV_CAP_RAWTRACE",
 	}
-	s, ok := dcStr[dc]
-	if !ok {
-		return fmt.Sprintf("?")
+	if s, ok := dcStr[dc]; ok {
+		return s
 	}
-	return s
+	return "unknown"
 }
 
 // HasCap returns true if a capability is present within the capabilities set.
@@ -451,17 +490,62 @@ func (caps Capabilities) String() string {
 	return strings.Join(s, "\n")
 }
 
+// GetCaps retrieves the capabilities of a device.
+func (hdl *DeviceHandle) GetCaps() (Capabilities, error) {
+	cCaps := (*C.uint8_t)(C.malloc(C.JAYLINK_DEV_CAPS_SIZE))
+	defer C.free(unsafe.Pointer(cCaps))
+	rc := int(C.jaylink_get_caps(hdl.hdl, cCaps))
+	if rc != C.JAYLINK_OK {
+		return nil, apiError("jaylink_get_caps", rc)
+	}
+	x := (*[1 << 30]C.uint8_t)(unsafe.Pointer(cCaps))
+	caps := make([]byte, C.JAYLINK_DEV_CAPS_SIZE)
+	for i := range caps {
+		caps[i] = byte(x[i])
+	}
+	return caps, nil
+}
+
+// GetExtendedCaps retrieves the extended capabilities of a device.
+// Extended capabilties are a superset of normal capabilities.
+func (hdl *DeviceHandle) GetExtendedCaps() (Capabilities, error) {
+	cCaps := (*C.uint8_t)(C.malloc(C.JAYLINK_DEV_EXT_CAPS_SIZE))
+	defer C.free(unsafe.Pointer(cCaps))
+	rc := int(C.jaylink_get_extended_caps(hdl.hdl, cCaps))
+	if rc != C.JAYLINK_OK {
+		return nil, apiError("jaylink_get_extended_caps", rc)
+	}
+	x := (*[1 << 30]C.uint8_t)(unsafe.Pointer(cCaps))
+	caps := make([]byte, C.JAYLINK_DEV_EXT_CAPS_SIZE)
+	for i := range caps {
+		caps[i] = byte(x[i])
+	}
+	return caps, nil
+}
+
+// GetAllCaps returns all device capabilities (normal or extended).
+func (hdl *DeviceHandle) GetAllCaps() (Capabilities, error) {
+	caps, err := hdl.GetCaps()
+	if err == nil && caps.HasCap(DEV_CAP_GET_EXT_CAPS) {
+		caps, err = hdl.GetExtendedCaps()
+	}
+	return caps, err
+}
+
 //-----------------------------------------------------------------------------
 
 // Context is a structure representing a libjaylink context.
 type Context struct {
 	ctx  *C.struct_jaylink_context
 	devs **C.struct_jaylink_device
-	cb   LogFunc // logging callback
+	cb   LogFunc     // logging callback
+	user interface{} // user data for logging callback
 }
 
 // gContext maps a C context pointer back to the Go context structure.
 var gContext = map[*C.struct_jaylink_context]*Context{}
+
+// lock the gContext map during access.
 var gLock = sync.RWMutex{}
 
 // ctxLookup lookups a Go context using a C context.
@@ -480,124 +564,16 @@ func ctxAdd(ctx *Context) {
 }
 
 //-----------------------------------------------------------------------------
-
-// Device is a structure representing a device.
-type Device struct {
-	dev *C.struct_jaylink_device
-}
-
-func (dev *Device) String() string {
-	s := []string{}
-	// hardware version
-	hw, err := dev.GetHardwareVersion()
-	if err == nil {
-		s = append(s, fmt.Sprintf("hardware_version %s", hw))
-	}
-	// product name
-	name, err := dev.GetProductName()
-	if err == nil {
-		s = append(s, fmt.Sprintf("product_name %s", name))
-	}
-	// nickname
-	name, err = dev.GetNickName()
-	if err == nil {
-		s = append(s, fmt.Sprintf("nickname %s", name))
-	}
-	// serial number
-	sn, err := dev.GetSerialNumber()
-	if err == nil {
-		s = append(s, fmt.Sprintf("serial_number %d", sn))
-	}
-	// host interface
-	hi, err := dev.GetHostInterface()
-	if err == nil {
-		s = append(s, fmt.Sprintf("host_interface %s", hi.String()))
-	}
-	// usb address
-	addr, err := dev.GetUsbAddress()
-	if err == nil {
-		s = append(s, fmt.Sprintf("usb_address %s", addr))
-	}
-	// mac address
-	mac, err := dev.GetMacAddress()
-	if err == nil {
-		s = append(s, fmt.Sprintf("mac_address %s", mac))
-	}
-	// ipv4 address
-	ip, err := dev.GetIPv4Address()
-	if err == nil {
-		s = append(s, fmt.Sprintf("ipv4_address %s", ip))
-	}
-	return strings.Join(s, " ")
-}
-
-//-----------------------------------------------------------------------------
-
-// DeviceHandle is a structure representing a handle of a device.
-type DeviceHandle struct {
-	hdl *C.struct_jaylink_device_handle
-}
-
-func (hdl *DeviceHandle) String() string {
-	s := []string{}
-
-	// firmware version
-	ver, err := hdl.GetFirmwareVersion()
-	if err == nil {
-		s = append(s, fmt.Sprintf("firmware version: %s", ver))
-	}
-
-	// hardware version
-	hw, err := hdl.GetHardwareVersion()
-	if err == nil {
-		s = append(s, fmt.Sprintf("hardware_version: %s", hw))
-	}
-
-	// capabilities
-	caps, err := hdl.GetCaps()
-	if err == nil && caps.HasCap(DEV_CAP_GET_EXT_CAPS) {
-		caps, err = hdl.GetExtendedCaps()
-	}
-	if err == nil {
-		s = append(s, fmt.Sprintf("capabilities:\n%s", caps))
-	}
-
-	// hardware info
-	if caps.HasCap(DEV_CAP_GET_HW_INFO) {
-		info, err := hdl.GetHardwareInfo(HW_INFO_TARGET_POWER | HW_INFO_ITARGET | HW_INFO_ITARGET_PEAK)
-		if err == nil {
-			s = append(s, fmt.Sprintf("target power: %x", info[0]))
-			s = append(s, fmt.Sprintf("target current: %x", info[1]))
-			s = append(s, fmt.Sprintf("peak target current: %x", info[2]))
-		}
-	}
-
-	// free memory
-	if caps.HasCap(DEV_CAP_GET_FREE_MEMORY) {
-		free, err := hdl.GetFreeMemory()
-		if err == nil {
-			s = append(s, fmt.Sprintf("free memory: %d bytes", free))
-		}
-	}
-
-	status, err := hdl.GetHardwareStatus()
-	if err == nil {
-		s = append(s, fmt.Sprintf("hardware status: %s", status))
-	}
-
-	return strings.Join(s, "\n")
-}
-
-//-----------------------------------------------------------------------------
-// core.c
+// Core Operations
 
 // Init initializes libjaylink.
 func Init() (*Context, error) {
 	ctx := Context{}
 	rc := int(C.jaylink_init((**C.struct_jaylink_context)(&ctx.ctx)))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_init", rc)
+		return nil, apiError("jaylink_init", rc)
 	}
+	ctxAdd(&ctx)
 	return &ctx, nil
 }
 
@@ -605,7 +581,7 @@ func Init() (*Context, error) {
 func (ctx *Context) Exit() error {
 	rc := int(C.jaylink_exit(ctx.ctx))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_exit", rc)
+		return apiError("jaylink_exit", rc)
 	}
 	return nil
 }
@@ -616,14 +592,24 @@ func LibraryHasCap(capability uint) bool {
 }
 
 //-----------------------------------------------------------------------------
-// device.c
+// Device Operations
+
+// Device is a structure representing a device.
+type Device struct {
+	dev *C.struct_jaylink_device
+}
+
+// DeviceHandle is a structure representing a handle of a device.
+type DeviceHandle struct {
+	hdl *C.struct_jaylink_device_handle
+}
 
 // GetDevices gets available devices.
 func (ctx *Context) GetDevices() ([]Device, error) {
 	var count C.size_t
 	rc := int(C.jaylink_get_devices(ctx.ctx, &ctx.devs, &count))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_devices", rc)
+		return nil, apiError("jaylink_get_devices", rc)
 	}
 	d := (*[1 << 30]*C.struct_jaylink_device)(unsafe.Pointer(ctx.devs))
 	dev := make([]Device, int(count))
@@ -645,34 +631,14 @@ func (ctx *Context) FreeDevices(dev []Device, unref bool) {
 	C.jaylink_free_devices(ctx.devs, C.bool(unref))
 }
 
-// GetHostInterface gets the host interface of a device.
-func (dev *Device) GetHostInterface() (HostInterface, error) {
-	var iface uint32
-	rc := int(C.jaylink_device_get_host_interface(dev.dev, &iface))
-	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_device_get_host_interface", rc)
-	}
-	return HostInterface(iface), nil
-}
-
 // GetSerialNumber gets the serial number of a device.
 func (dev *Device) GetSerialNumber() (uint, error) {
 	var serialNumber C.uint32_t
 	rc := int(C.jaylink_device_get_serial_number(dev.dev, &serialNumber))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_device_get_serial_number", rc)
+		return 0, apiError("jaylink_device_get_serial_number", rc)
 	}
 	return uint(serialNumber), nil
-}
-
-// GetUsbAddress gets the USB address of a device.
-func (dev *Device) GetUsbAddress() (UsbAddress, error) {
-	var usbAddress uint32
-	rc := int(C.jaylink_device_get_usb_address(dev.dev, &usbAddress))
-	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_device_get_usb_address", rc)
-	}
-	return UsbAddress(usbAddress), nil
 }
 
 // GetUsbPorts gets the USB bus and port numbers of a device.
@@ -682,7 +648,7 @@ func (dev *Device) GetUsbPorts() (uint8, []uint8, error) {
 	var cBus C.uint8_t
 	rc := int(C.jaylink_device_get_usb_bus_ports(dev.dev, &cBus, &cPorts, &cLength))
 	if rc != C.JAYLINK_OK {
-		return 0, nil, newError("jaylink_device_get_usb_bus_ports", rc)
+		return 0, nil, apiError("jaylink_device_get_usb_bus_ports", rc)
 	}
 	ports := make([]uint8, cLength)
 	p := (*[1 << 30]C.uint8_t)(unsafe.Pointer(cPorts))
@@ -698,7 +664,7 @@ func (dev *Device) GetIPv4Address() (string, error) {
 	defer C.free(unsafe.Pointer(addr))
 	rc := int(C.jaylink_device_get_ipv4_address(dev.dev, addr))
 	if rc != C.JAYLINK_OK {
-		return "", newError("jaylink_device_get_ipv4_address", rc)
+		return "", apiError("jaylink_device_get_ipv4_address", rc)
 	}
 	return C.GoString(addr), nil
 }
@@ -709,7 +675,7 @@ func (dev *Device) GetMacAddress() ([]byte, error) {
 	defer freeBuffer(mac)
 	rc := int(C.jaylink_device_get_mac_address(dev.dev, mac))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_device_get_mac_address", rc)
+		return nil, apiError("jaylink_device_get_mac_address", rc)
 	}
 	return c2goSlice(mac, C.JAYLINK_MAC_ADDRESS_LENGTH), nil
 }
@@ -720,7 +686,7 @@ func (dev *Device) GetProductName() (string, error) {
 	defer C.free(unsafe.Pointer(name))
 	rc := int(C.jaylink_device_get_product_name(dev.dev, name))
 	if rc != C.JAYLINK_OK {
-		return "", newError("jaylink_device_get_product_name", rc)
+		return "", apiError("jaylink_device_get_product_name", rc)
 	}
 	return C.GoString(name), nil
 }
@@ -731,7 +697,7 @@ func (dev *Device) GetNickName() (string, error) {
 	defer C.free(unsafe.Pointer(name))
 	rc := int(C.jaylink_device_get_nickname(dev.dev, name))
 	if rc != C.JAYLINK_OK {
-		return "", newError("jaylink_device_get_nickname", rc)
+		return "", apiError("jaylink_device_get_nickname", rc)
 	}
 	return C.GoString(name), nil
 }
@@ -755,7 +721,7 @@ func (dev *Device) Open() (*DeviceHandle, error) {
 	hdl := DeviceHandle{}
 	rc := int(C.jaylink_open(dev.dev, (**C.struct_jaylink_device_handle)(&hdl.hdl)))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_open", rc)
+		return nil, apiError("jaylink_open", rc)
 	}
 	return &hdl, nil
 }
@@ -764,7 +730,7 @@ func (dev *Device) Open() (*DeviceHandle, error) {
 func (hdl *DeviceHandle) Close() error {
 	rc := int(C.jaylink_close(hdl.hdl))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_close", rc)
+		return apiError("jaylink_close", rc)
 	}
 	return nil
 }
@@ -784,42 +750,10 @@ func (hdl *DeviceHandle) GetFirmwareVersion() (string, error) {
 	var cLength C.size_t
 	rc := int(C.jaylink_get_firmware_version(hdl.hdl, &cVersion, &cLength))
 	if rc != C.JAYLINK_OK {
-		return "", newError("jaylink_get_firmware_version", rc)
+		return "", apiError("jaylink_get_firmware_version", rc)
 	}
 	defer C.free(unsafe.Pointer(cVersion))
 	return C.GoString(cVersion), nil
-}
-
-// GetCaps retrieves the capabilities of a device.
-func (hdl *DeviceHandle) GetCaps() (Capabilities, error) {
-	cCaps := (*C.uint8_t)(C.malloc(C.JAYLINK_DEV_CAPS_SIZE))
-	defer C.free(unsafe.Pointer(cCaps))
-	rc := int(C.jaylink_get_caps(hdl.hdl, cCaps))
-	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_caps", rc)
-	}
-	x := (*[1 << 30]C.uint8_t)(unsafe.Pointer(cCaps))
-	caps := make([]byte, C.JAYLINK_DEV_CAPS_SIZE)
-	for i := range caps {
-		caps[i] = byte(x[i])
-	}
-	return caps, nil
-}
-
-// GetExtendedCaps retrieves the extended capabilities of a device.
-func (hdl *DeviceHandle) GetExtendedCaps() (Capabilities, error) {
-	cCaps := (*C.uint8_t)(C.malloc(C.JAYLINK_DEV_EXT_CAPS_SIZE))
-	defer C.free(unsafe.Pointer(cCaps))
-	rc := int(C.jaylink_get_extended_caps(hdl.hdl, cCaps))
-	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_extended_caps", rc)
-	}
-	x := (*[1 << 30]C.uint8_t)(unsafe.Pointer(cCaps))
-	caps := make([]byte, C.JAYLINK_DEV_EXT_CAPS_SIZE)
-	for i := range caps {
-		caps[i] = byte(x[i])
-	}
-	return caps, nil
 }
 
 // GetFreeMemory retrieves the size of free memory of a device.
@@ -827,7 +761,7 @@ func (hdl *DeviceHandle) GetFreeMemory() (uint32, error) {
 	var cSize C.uint32_t
 	rc := int(C.jaylink_get_free_memory(hdl.hdl, &cSize))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_get_free_memory", rc)
+		return 0, apiError("jaylink_get_free_memory", rc)
 	}
 	return uint32(cSize), nil
 }
@@ -841,7 +775,7 @@ func (hdl *DeviceHandle) ReadRawConfig() (*RawConfig, error) {
 	defer freeBuffer(cConfig)
 	rc := int(C.jaylink_read_raw_config(hdl.hdl, cConfig))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_read_raw_config", rc)
+		return nil, apiError("jaylink_read_raw_config", rc)
 	}
 	var config RawConfig
 	c2goCopy(config[:], cConfig)
@@ -854,7 +788,7 @@ func (hdl *DeviceHandle) WriteRawConfig(config *RawConfig) error {
 	defer freeBuffer(cConfig)
 	rc := int(C.jaylink_write_raw_config(hdl.hdl, cConfig))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_write_raw_config", rc)
+		return apiError("jaylink_write_raw_config", rc)
 	}
 	return nil
 }
@@ -907,7 +841,7 @@ func (hdl *DeviceHandle) Register(connection *Connection) ([]Connection, error) 
 	// register
 	rc := int(C.jaylink_register(hdl.hdl, cConnection, cConnections, &cCount))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_register", rc)
+		return nil, apiError("jaylink_register", rc)
 	}
 	// copy the result to go
 	connections := make([]Connection, int(cCount))
@@ -928,7 +862,7 @@ func (hdl *DeviceHandle) Unregister(connection *Connection) ([]Connection, error
 	// unregister
 	rc := int(C.jaylink_unregister(hdl.hdl, cConnection, cConnections, &cCount))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_unregister", rc)
+		return nil, apiError("jaylink_unregister", rc)
 	}
 	// copy the result to go
 	connections := make([]Connection, int(cCount))
@@ -940,19 +874,19 @@ func (hdl *DeviceHandle) Unregister(connection *Connection) ([]Connection, error
 }
 
 //-----------------------------------------------------------------------------
-// discovery.c
+// Device Discovery
 
 // DiscoveryScan scans for devices.
 func (ctx *Context) DiscoveryScan(ifaces HostInterface) error {
 	rc := int(C.jaylink_discovery_scan(ctx.ctx, C.uint32_t(ifaces)))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_discovery_scan", rc)
+		return apiError("jaylink_discovery_scan", rc)
 	}
 	return nil
 }
 
 //-----------------------------------------------------------------------------
-// emucom.c
+// EMUCOM Operations
 
 // EmuComRead reads from an EMUCOM channel.
 func (hdl *DeviceHandle) EmuComRead(channel uint32, length int) ([]byte, error) {
@@ -961,7 +895,7 @@ func (hdl *DeviceHandle) EmuComRead(channel uint32, length int) ([]byte, error) 
 	cLength := C.uint32_t(length)
 	rc := int(C.jaylink_emucom_read(hdl.hdl, C.uint32_t(channel), cBuffer, &cLength))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_emucom_read", rc)
+		return nil, apiError("jaylink_emucom_read", rc)
 	}
 	return c2goSlice(cBuffer, int(cLength)), nil
 }
@@ -973,13 +907,13 @@ func (hdl *DeviceHandle) EmuComWrite(channel uint32, buffer []byte) (int, error)
 	cLength := C.uint32_t(len(buffer))
 	rc := int(C.jaylink_emucom_write(hdl.hdl, C.uint32_t(channel), cBuffer, &cLength))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_emucom_write", rc)
+		return 0, apiError("jaylink_emucom_write", rc)
 	}
 	return int(cLength), nil
 }
 
 //-----------------------------------------------------------------------------
-// fileio.c
+// File I/O Operations
 
 // FileRead reads from a file.
 func (hdl *DeviceHandle) FileRead(filename string, offset uint32, length int) ([]byte, error) {
@@ -990,7 +924,7 @@ func (hdl *DeviceHandle) FileRead(filename string, offset uint32, length int) ([
 	cLength := C.uint32_t(length)
 	rc := int(C.jaylink_file_read(hdl.hdl, cFilename, cBuffer, C.uint32_t(offset), &cLength))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_file_read", rc)
+		return nil, apiError("jaylink_file_read", rc)
 	}
 	return c2goSlice(cBuffer, int(cLength)), nil
 }
@@ -1004,7 +938,7 @@ func (hdl *DeviceHandle) FileWrite(filename string, buffer []byte, offset uint32
 	cLength := C.uint32_t(len(buffer))
 	rc := int(C.jaylink_file_write(hdl.hdl, cFilename, cBuffer, C.uint32_t(offset), &cLength))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_file_write", rc)
+		return 0, apiError("jaylink_file_write", rc)
 	}
 	return int(cLength), nil
 }
@@ -1016,7 +950,7 @@ func (hdl *DeviceHandle) FileGetSize(filename string) (uint32, error) {
 	var cSize C.uint32_t
 	rc := int(C.jaylink_file_get_size(hdl.hdl, cFilename, &cSize))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_file_get_size", rc)
+		return 0, apiError("jaylink_file_get_size", rc)
 	}
 	return uint32(cSize), nil
 }
@@ -1027,13 +961,13 @@ func (hdl *DeviceHandle) FileDelete(filename string) error {
 	defer C.free(unsafe.Pointer(cFilename))
 	rc := int(C.jaylink_file_delete(hdl.hdl, cFilename))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_file_delete", rc)
+		return apiError("jaylink_file_delete", rc)
 	}
 	return nil
 }
 
 //-----------------------------------------------------------------------------
-// jtag.c
+// JTAG Operations
 
 // JtagVersion is the JTAG command version.
 type JtagVersion uint32
@@ -1058,7 +992,7 @@ func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, e
 	defer freeBuffer(cTdo)
 	rc := int(C.jaylink_jtag_io(hdl.hdl, cTms, cTdi, cTdo, C.uint16_t(n), uint32(version)))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_jtag_io", rc)
+		return nil, apiError("jaylink_jtag_io", rc)
 	}
 	return c2goSlice(cTdo, n), nil
 }
@@ -1067,7 +1001,7 @@ func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, e
 func (hdl *DeviceHandle) JtagClearTrst() error {
 	rc := int(C.jaylink_jtag_clear_trst(hdl.hdl))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_jtag_clear_trst", rc)
+		return apiError("jaylink_jtag_clear_trst", rc)
 	}
 	return nil
 }
@@ -1076,7 +1010,7 @@ func (hdl *DeviceHandle) JtagClearTrst() error {
 func (hdl *DeviceHandle) JtagSetTrst() error {
 	rc := int(C.jaylink_jtag_set_trst(hdl.hdl))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_jtag_set_trst", rc)
+		return apiError("jaylink_jtag_set_trst", rc)
 	}
 	return nil
 }
@@ -1098,13 +1032,13 @@ const (
 )
 
 // LogFunc is a logging callback function.
-type LogFunc func(domain, msg string)
+type LogFunc func(domain, msg string, user interface{})
 
 //export goLogCallback
 func goLogCallback(cCtx *C.struct_jaylink_context, cMsg *C.char) {
 	ctx := ctxLookup(cCtx)
 	if ctx != nil {
-		ctx.cb(ctx.LogGetDomain(), C.GoString(cMsg))
+		ctx.cb(ctx.LogGetDomain(), C.GoString(cMsg), ctx.user)
 	}
 }
 
@@ -1112,7 +1046,7 @@ func goLogCallback(cCtx *C.struct_jaylink_context, cMsg *C.char) {
 func (ctx *Context) LogSetLevel(level LogLevel) error {
 	rc := int(C.jaylink_log_set_level(ctx.ctx, uint32(level)))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_log_set_level", rc)
+		return apiError("jaylink_log_set_level", rc)
 	}
 	return nil
 }
@@ -1122,19 +1056,19 @@ func (ctx *Context) LogGetLevel() (LogLevel, error) {
 	var cLevel uint32
 	rc := int(C.jaylink_log_get_level(ctx.ctx, &cLevel))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_log_get_level", rc)
+		return 0, apiError("jaylink_log_get_level", rc)
 	}
 	return LogLevel(cLevel), nil
 }
 
 // LogSetCallback sets the logging callback function.
-func (ctx *Context) LogSetCallback(cb LogFunc) error {
+func (ctx *Context) LogSetCallback(cb LogFunc, user interface{}) error {
 	rc := int(C.jaylink_log_set_callback(ctx.ctx, C.jaylink_log_callback(C.LogCallback), nil))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_log_set_callback", rc)
+		return apiError("jaylink_log_set_callback", rc)
 	}
 	ctx.cb = cb
-	ctxAdd(ctx)
+	ctx.user = user
 	return nil
 }
 
@@ -1144,7 +1078,7 @@ func (ctx *Context) LogSetDomain(domain string) error {
 	defer C.free(unsafe.Pointer(cDomain))
 	rc := int(C.jaylink_log_set_domain(ctx.ctx, cDomain))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_log_set_domain", rc)
+		return apiError("jaylink_log_set_domain", rc)
 	}
 	return nil
 }
@@ -1156,7 +1090,7 @@ func (ctx *Context) LogGetDomain() string {
 }
 
 //-----------------------------------------------------------------------------
-// swd.c
+// Serial Wire Debug
 
 // SwdIO performs a SWD I/O operation.
 func (hdl *DeviceHandle) SwdIO(direction, out []byte) ([]byte, error) {
@@ -1172,13 +1106,13 @@ func (hdl *DeviceHandle) SwdIO(direction, out []byte) ([]byte, error) {
 	defer freeBuffer(cIn)
 	rc := int(C.jaylink_swd_io(hdl.hdl, cDirection, cOut, cIn, C.uint16_t(n)))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_swd_io", rc)
+		return nil, apiError("jaylink_swd_io", rc)
 	}
 	return c2goSlice(cIn, n), nil
 }
 
 //-----------------------------------------------------------------------------
-// swo.c
+// Serial Wire Output
 
 // SwoMode is the Serial Wire Output (SWO) capture mode.
 type SwoMode uint32
@@ -1201,7 +1135,7 @@ type SwoSpeed struct {
 func (hdl *DeviceHandle) SwoStart(mode SwoMode, baudrate, size uint32) error {
 	rc := int(C.jaylink_swo_start(hdl.hdl, uint32(mode), C.uint32_t(baudrate), C.uint32_t(size)))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_swo_start", rc)
+		return apiError("jaylink_swo_start", rc)
 	}
 	return nil
 }
@@ -1210,7 +1144,7 @@ func (hdl *DeviceHandle) SwoStart(mode SwoMode, baudrate, size uint32) error {
 func (hdl *DeviceHandle) SwoStop() error {
 	rc := int(C.jaylink_swo_stop(hdl.hdl))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_swo_stop", rc)
+		return apiError("jaylink_swo_stop", rc)
 	}
 	return nil
 }
@@ -1222,7 +1156,7 @@ func (hdl *DeviceHandle) SwoRead(length int) ([]byte, error) {
 	defer freeBuffer(cBuffer)
 	rc := int(C.jaylink_swo_read(hdl.hdl, cBuffer, &cLength))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_swo_read", rc)
+		return nil, apiError("jaylink_swo_read", rc)
 	}
 	return c2goSlice(cBuffer, int(cLength)), nil
 }
@@ -1232,7 +1166,7 @@ func (hdl *DeviceHandle) SwoGetSpeeds(mode SwoMode) (*SwoSpeed, error) {
 	var cSpeed C.struct_jaylink_swo_speed
 	rc := int(C.jaylink_swo_get_speeds(hdl.hdl, uint32(mode), &cSpeed))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_swo_get_speeds", rc)
+		return nil, apiError("jaylink_swo_get_speeds", rc)
 	}
 	speed := SwoSpeed{
 		Freq:         uint32(cSpeed.freq),
@@ -1245,7 +1179,7 @@ func (hdl *DeviceHandle) SwoGetSpeeds(mode SwoMode) (*SwoSpeed, error) {
 }
 
 //-----------------------------------------------------------------------------
-// target.c
+// Target functions
 
 // TargetInterface is a target interface enumeration.
 type TargetInterface uint32
@@ -1269,7 +1203,7 @@ type Speed struct {
 func (hdl *DeviceHandle) SetSpeed(speed uint16) error {
 	rc := int(C.jaylink_set_speed(hdl.hdl, C.uint16_t(speed)))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_set_speed", rc)
+		return apiError("jaylink_set_speed", rc)
 	}
 	return nil
 }
@@ -1279,7 +1213,7 @@ func (hdl *DeviceHandle) GetSpeeds() (*Speed, error) {
 	var cSpeed C.struct_jaylink_speed
 	rc := int(C.jaylink_get_speeds(hdl.hdl, &cSpeed))
 	if rc != C.JAYLINK_OK {
-		return nil, newError("jaylink_get_speeds", rc)
+		return nil, apiError("jaylink_get_speeds", rc)
 	}
 	speed := Speed{
 		Freq: uint32(cSpeed.freq),
@@ -1293,7 +1227,7 @@ func (hdl *DeviceHandle) SelectInterface(iface TargetInterface) (TargetInterface
 	var prev uint32
 	rc := int(C.jaylink_select_interface(hdl.hdl, uint32(iface), &prev))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_select_interface", rc)
+		return 0, apiError("jaylink_select_interface", rc)
 	}
 	return TargetInterface(prev), nil
 }
@@ -1303,7 +1237,7 @@ func (hdl *DeviceHandle) GetAvailableInterfaces() (uint32, error) {
 	var ifaces C.uint32_t
 	rc := int(C.jaylink_get_available_interfaces(hdl.hdl, &ifaces))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_get_available_interfaces", rc)
+		return 0, apiError("jaylink_get_available_interfaces", rc)
 	}
 	return uint32(ifaces), nil
 }
@@ -1313,7 +1247,7 @@ func (hdl *DeviceHandle) GetSelectedInterface() (TargetInterface, error) {
 	var iface uint32
 	rc := int(C.jaylink_get_selected_interface(hdl.hdl, &iface))
 	if rc != C.JAYLINK_OK {
-		return 0, newError("jaylink_get_selected_interface", rc)
+		return 0, apiError("jaylink_get_selected_interface", rc)
 	}
 	return TargetInterface(iface), nil
 }
@@ -1322,7 +1256,7 @@ func (hdl *DeviceHandle) GetSelectedInterface() (TargetInterface, error) {
 func (hdl *DeviceHandle) ClearReset() error {
 	rc := int(C.jaylink_clear_reset(hdl.hdl))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_clear_reset", rc)
+		return apiError("jaylink_clear_reset", rc)
 	}
 	return nil
 }
@@ -1331,7 +1265,7 @@ func (hdl *DeviceHandle) ClearReset() error {
 func (hdl *DeviceHandle) SetReset() error {
 	rc := int(C.jaylink_set_reset(hdl.hdl))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_set_reset", rc)
+		return apiError("jaylink_set_reset", rc)
 	}
 	return nil
 }
@@ -1340,13 +1274,13 @@ func (hdl *DeviceHandle) SetReset() error {
 func (hdl *DeviceHandle) SetTargetPower(enable bool) error {
 	rc := int(C.jaylink_set_target_power(hdl.hdl, C.bool(enable)))
 	if rc != C.JAYLINK_OK {
-		return newError("jaylink_set_target_power", rc)
+		return apiError("jaylink_set_target_power", rc)
 	}
 	return nil
 }
 
 //-----------------------------------------------------------------------------
-// version.c
+// Version functions
 
 // VersionPackageGetMajor gets the major version number of the libjaylink package.
 func VersionPackageGetMajor() int {
