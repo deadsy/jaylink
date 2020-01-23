@@ -11,43 +11,59 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/deadsy/libjaylink"
 )
 
 //-----------------------------------------------------------------------------
 
-func main() {
+const colorGreen = "\033[0;32m"
+const colorNone = "\033[0m"
 
-	fmt.Printf("package major %d minor %d micro %d %s\n",
-		libjaylink.VersionPackageGetMajor(),
-		libjaylink.VersionPackageGetMinor(),
-		libjaylink.VersionPackageGetMicro(),
-		libjaylink.VersionPackageGetString())
+func logCallback(domain, msg string) {
+	s := []string{colorGreen, domain, msg, colorNone}
+	fmt.Printf("%s\n", strings.Join(s, ""))
+}
 
-	fmt.Printf("library current %d revision %d age %d %s\n",
-		libjaylink.VersionLibraryGetCurrent(),
-		libjaylink.VersionLibraryGetRevision(),
-		libjaylink.VersionLibraryGetAge(),
-		libjaylink.VersionLibraryGetString())
+//-----------------------------------------------------------------------------
+
+func libTest() error {
+
+	fmt.Printf("package %s\n", libjaylink.VersionPackageGetString())
+	fmt.Printf("library %s\n", libjaylink.VersionLibraryGetString())
 
 	ctx, err := libjaylink.Init()
 	if err != nil {
-		fmt.Printf("%s\n", err)
-		os.Exit(1)
+		return err
+	}
+	defer ctx.Exit()
+
+	err = ctx.LogSetCallback(logCallback)
+	if err != nil {
+		return err
+	}
+
+	err = ctx.LogSetLevel(libjaylink.LOG_LEVEL_DEBUG)
+	if err != nil {
+		return err
+	}
+
+	err = ctx.LogSetDomain("test: ")
+	if err != nil {
+		return err
 	}
 
 	err = ctx.DiscoveryScan(libjaylink.HIF_USB)
 	if err != nil {
-		fmt.Printf("%s\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	dev, err := ctx.GetDevices()
 	if err != nil {
-		fmt.Printf("%s\n", err)
-		goto Exit
+		return err
 	}
+	defer ctx.FreeDevices(dev, true)
 
 	fmt.Printf("%d devices found\n", len(dev))
 	for i := range dev {
@@ -66,19 +82,19 @@ func main() {
 			fmt.Printf("%s\n", err)
 			continue
 		}
-
 	}
 
-	ctx.FreeDevices(dev, true)
+	return nil
+}
 
-Exit:
+//-----------------------------------------------------------------------------
 
-	err = ctx.Exit()
+func main() {
+	err := libTest()
 	if err != nil {
 		fmt.Printf("%s\n", err)
 		os.Exit(1)
 	}
-
 	os.Exit(0)
 }
 

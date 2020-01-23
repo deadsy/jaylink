@@ -12,33 +12,15 @@ See: https://gitlab.zapb.de/zapb/libjaylink
 package libjaylink
 
 /*
-#cgo linux LDFLAGS: -Wl,-unresolved-symbols=ignore-all
-#cgo darwin LDFLAGS: -Wl,-undefined,dynamic_lookup
 #cgo pkg-config: libusb-1.0
 #cgo pkg-config: libjaylink
 #include <libjaylink/libjaylink.h>
 #include <stdlib.h>
-#include <stdio.h>
 
-// Go won't allow the "type" field, so this is a C-wrapper.
-uint32_t get_hw_type(struct jaylink_hardware_version *h) {
-  return (uint32_t)h->type;
-}
+uint32_t get_hw_type(struct jaylink_hardware_version *h);
 
-extern void goLogCallback(const struct jaylink_context *ctx, char *msg);
-
-int LogCallback(const struct jaylink_context *ctx, enum jaylink_log_level level, const char *format, va_list args, void *user_data) {
-  // check the log level
-  enum jaylink_log_level log_level;
-  jaylink_log_get_level(ctx, &log_level);
-  if (level > log_level) {
-    return 0;
-  }
-  char msg[128];
-  vsnprintf(msg, sizeof(msg), format, args);
-  goLogCallback((void *)ctx, msg);
-  return 0;
-}
+int LogCallback(const struct jaylink_context *ctx, enum jaylink_log_level level,
+  const char *format, va_list args, void *user_data);
 
 */
 import "C"
@@ -46,6 +28,7 @@ import "C"
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -107,19 +90,19 @@ func onesCount32(x uint32) int {
 
 // Error stores C API error codes.
 type Error struct {
-	name string // function name
-	rc   int    // C return code
+	Name string // function name
+	Code int    // C return code
 }
 
 func newError(name string, rc int) *Error {
 	return &Error{
-		name: name,
-		rc:   rc,
+		Name: name,
+		Code: rc,
 	}
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("%s failed, %s", e.name, StrError(e.rc))
+	return fmt.Sprintf("%s failed, %s", e.Name, StrError(e.Code))
 }
 
 // StrError returns a human-readable description of the error code.
@@ -177,10 +160,10 @@ const (
 
 // HardwareVersion stores the Segger hardware type/version.
 type HardwareVersion struct {
-	hwtype   HardwareType
-	major    uint8
-	minor    uint8
-	revision uint8
+	Hwtype   HardwareType
+	Major    uint8
+	Minor    uint8
+	Revision uint8
 }
 
 func (h HardwareVersion) String() string {
@@ -194,15 +177,15 @@ func (h HardwareVersion) String() string {
 		HW_TYPE_JLINK_LITE_XMC4200: "J-Link Lite-XMC4200",
 		HW_TYPE_LPCLINK2:           "J-Link on LPC-Link2",
 	}
-	return fmt.Sprintf("%s %d.%d.%d", s[h.hwtype], h.major, h.minor, h.revision)
+	return fmt.Sprintf("%s %d.%d.%d", s[h.Hwtype], h.Major, h.Minor, h.Revision)
 }
 
 func c2goHardwareVersion(hw *C.struct_jaylink_hardware_version) *HardwareVersion {
 	return &HardwareVersion{
-		hwtype:   HardwareType(C.get_hw_type(hw)),
-		major:    uint8(hw.major),
-		minor:    uint8(hw.minor),
-		revision: uint8(hw.revision),
+		Hwtype:   HardwareType(C.get_hw_type(hw)),
+		Major:    uint8(hw.major),
+		Minor:    uint8(hw.minor),
+		Revision: uint8(hw.revision),
 	}
 }
 
@@ -474,6 +457,26 @@ func (caps Capabilities) String() string {
 type Context struct {
 	ctx  *C.struct_jaylink_context
 	devs **C.struct_jaylink_device
+	cb   LogFunc // logging callback
+}
+
+// gContext maps a C context pointer back to the Go context structure.
+var gContext = map[*C.struct_jaylink_context]*Context{}
+var gLock = sync.RWMutex{}
+
+// ctxLookup lookups a Go context using a C context.
+func ctxLookup(cCtx *C.struct_jaylink_context) *Context {
+	gLock.RLock()
+	ctx := gContext[cCtx]
+	gLock.RUnlock()
+	return ctx
+}
+
+// ctxAdd adds a C context to Go context lookup.
+func ctxAdd(ctx *Context) {
+	gLock.Lock()
+	gContext[ctx.ctx] = ctx
+	gLock.Unlock()
 }
 
 //-----------------------------------------------------------------------------
@@ -542,6 +545,12 @@ func (hdl *DeviceHandle) String() string {
 	ver, err := hdl.GetFirmwareVersion()
 	if err == nil {
 		s = append(s, fmt.Sprintf("firmware version: %s", ver))
+	}
+
+	// hardware version
+	hw, err := hdl.GetHardwareVersion()
+	if err == nil {
+		s = append(s, fmt.Sprintf("hardware_version: %s", hw))
 	}
 
 	// capabilities
@@ -1089,16 +1098,19 @@ const (
 )
 
 // LogFunc is a logging callback function.
-type LogFunc func(domain, msg string) error
+type LogFunc func(domain, msg string)
 
-// export goLogCallback
-func goLogCallback(ctx *C.struct_jaylink_context, msg *C.char) {
+//export goLogCallback
+func goLogCallback(cCtx *C.struct_jaylink_context, cMsg *C.char) {
+	ctx := ctxLookup(cCtx)
+	if ctx != nil {
+		ctx.cb(ctx.LogGetDomain(), C.GoString(cMsg))
+	}
 }
 
 // LogSetLevel sets the log level.
 func (ctx *Context) LogSetLevel(level LogLevel) error {
-	var cLevel uint32
-	rc := int(C.jaylink_log_set_level(ctx.ctx, cLevel))
+	rc := int(C.jaylink_log_set_level(ctx.ctx, uint32(level)))
 	if rc != C.JAYLINK_OK {
 		return newError("jaylink_log_set_level", rc)
 	}
@@ -1121,6 +1133,8 @@ func (ctx *Context) LogSetCallback(cb LogFunc) error {
 	if rc != C.JAYLINK_OK {
 		return newError("jaylink_log_set_callback", rc)
 	}
+	ctx.cb = cb
+	ctxAdd(ctx)
 	return nil
 }
 
