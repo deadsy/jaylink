@@ -974,9 +974,22 @@ type JtagVersion uint32
 
 // JtagVersion values.
 const (
-	JTAG_VERSION_2 JtagVersion = C.JAYLINK_JTAG_VERSION_2 // JTAG command version 2. Obsolete for major hardware version 5 and above, use Version 3.
-	JTAG_VERSION_3 JtagVersion = C.JAYLINK_JTAG_VERSION_3 // JTAG command version 3
+	JTAG_VERSION_2 JtagVersion = C.JAYLINK_JTAG_VERSION_2
+	JTAG_VERSION_3 JtagVersion = C.JAYLINK_JTAG_VERSION_3
 )
+
+// GetJtagCommandVersion gets the JTAG command version for the device.
+func (hdl *DeviceHandle) GetJtagCommandVersion() (JtagVersion, error) {
+	hw, err := hdl.GetHardwareVersion()
+	if err == nil {
+		return 0, err
+	}
+	// For major hardware version 5 and above, use Version 3.
+	if hw.Major >= 5 {
+		return JTAG_VERSION_3, nil
+	}
+	return JTAG_VERSION_2, nil
+}
 
 // JtagIO performs a JTAG I/O operation.
 func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, error) {
