@@ -26,6 +26,7 @@ int LogCallback(const struct jaylink_context *ctx, enum jaylink_log_level level,
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1194,10 +1195,10 @@ func (hdl *DeviceHandle) SwoGetSpeeds(mode SwoMode) (*SwoSpeed, error) {
 //-----------------------------------------------------------------------------
 // Target functions
 
-// TargetInterface is a target interface enumeration.
+// TargetInterface is a bitmap of target interfaces.
 type TargetInterface uint32
 
-// TargetInterface values
+// TargetInterface bit values
 const (
 	TIF_JTAG          TargetInterface = C.JAYLINK_TIF_JTAG          // Joint Test Action Group, IEEE 1149.1 (JTAG).
 	TIF_SWD           TargetInterface = C.JAYLINK_TIF_SWD           // Serial Wire Debug (SWD).
@@ -1212,7 +1213,7 @@ type Speed struct {
 	Div  uint16 // Minimum frequency divider.
 }
 
-// SetSpeed sets the target interface speed.
+// SetSpeed sets the target interface speed (in kHz units).
 func (hdl *DeviceHandle) SetSpeed(speed uint16) error {
 	rc := int(C.jaylink_set_speed(hdl.hdl, C.uint16_t(speed)))
 	if rc != C.JAYLINK_OK {
@@ -1233,6 +1234,18 @@ func (hdl *DeviceHandle) GetSpeeds() (*Speed, error) {
 		Div:  uint16(cSpeed.div),
 	}
 	return &speed, nil
+}
+
+// GetMaxSpeed returns the maximum interface speed.
+func (hdl *DeviceHandle) GetMaxSpeed() (uint16, error) {
+	speed, err := hdl.GetSpeeds()
+	if err != nil {
+		return 0, err
+	}
+	if speed.Div == 0 {
+		return 0, errors.New("Speed.Div == 0")
+	}
+	return uint16(speed.Freq / (1000 * uint32(speed.Div))), nil
 }
 
 // SelectInterface selects the target interface.

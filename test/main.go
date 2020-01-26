@@ -121,6 +121,11 @@ func displayHandle(hdl *libjaylink.DeviceHandle) string {
 	if err == nil {
 		s = append(s, fmt.Sprintf("status: %s", status))
 	}
+	// maximum interface speed
+	speed, err := hdl.GetMaxSpeed()
+	if err == nil {
+		s = append(s, fmt.Sprintf("max speed: %dkHz", speed))
+	}
 	// config
 	config, err := hdl.ReadRawConfig()
 	if err == nil {
