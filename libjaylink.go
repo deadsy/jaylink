@@ -981,7 +981,7 @@ const (
 // GetJtagCommandVersion gets the JTAG command version for the device.
 func (hdl *DeviceHandle) GetJtagCommandVersion() (JtagVersion, error) {
 	hw, err := hdl.GetHardwareVersion()
-	if err == nil {
+	if err != nil {
 		return 0, err
 	}
 	// For major hardware version 5 and above, use Version 3.
