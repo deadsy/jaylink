@@ -993,14 +993,14 @@ func (hdl *DeviceHandle) GetJtagCommandVersion() (JtagVersion, error) {
 }
 
 // JtagIO performs a JTAG I/O operation.
-func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, error) {
-	n := len(tms)
-	if len(tdi) != n {
+func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, n uint16, version JtagVersion) ([]byte, error) {
+	nbytes := len(tms)
+	if len(tdi) != nbytes {
 		panic("len(tms) != len(tdi)")
 	}
 	cTms := go2cBuffer(tms)
 	cTdi := go2cBuffer(tdi)
-	cTdo := allocBuffer(n)
+	cTdo := allocBuffer(nbytes)
 	defer freeBuffer(cTms)
 	defer freeBuffer(cTdi)
 	defer freeBuffer(cTdo)
@@ -1008,7 +1008,7 @@ func (hdl *DeviceHandle) JtagIO(tms, tdi []byte, version JtagVersion) ([]byte, e
 	if rc != C.JAYLINK_OK {
 		return nil, apiError("jaylink_jtag_io", rc)
 	}
-	return c2goSlice(cTdo, n), nil
+	return c2goSlice(cTdo, nbytes), nil
 }
 
 // JtagClearTrst clears the JTAG test reset (TRST) signal.
