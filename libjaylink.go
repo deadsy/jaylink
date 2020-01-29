@@ -557,10 +557,17 @@ func ctxLookup(cCtx *C.struct_jaylink_context) *Context {
 	return ctx
 }
 
-// ctxAdd adds a C context to Go context lookup.
+// ctxAdd adds a C to Go context lookup.
 func ctxAdd(ctx *Context) {
 	gLock.Lock()
 	gContext[ctx.ctx] = ctx
+	gLock.Unlock()
+}
+
+// ctxRemove removes a C to Go context lookup.
+func ctxRemove(ctx *Context) {
+	gLock.Lock()
+	delete(gContext, ctx.ctx)
 	gLock.Unlock()
 }
 
@@ -580,6 +587,7 @@ func Init() (*Context, error) {
 
 // Exit shutdowns libjaylink.
 func (ctx *Context) Exit() error {
+	ctxRemove(ctx)
 	rc := int(C.jaylink_exit(ctx.ctx))
 	if rc != C.JAYLINK_OK {
 		return apiError("jaylink_exit", rc)
@@ -1107,14 +1115,14 @@ func (ctx *Context) LogGetDomain() string {
 // Serial Wire Debug
 
 // SwdIO performs a SWD I/O operation.
-func (hdl *DeviceHandle) SwdIO(direction, out []byte) ([]byte, error) {
-	n := len(direction)
-	if len(out) != n {
+func (hdl *DeviceHandle) SwdIO(direction, out []byte, n uint16) ([]byte, error) {
+	nbytes := len(direction)
+	if len(out) != nbytes {
 		panic("len(direction) != len(out)")
 	}
 	cDirection := go2cBuffer(direction)
 	cOut := go2cBuffer(out)
-	cIn := allocBuffer(n)
+	cIn := allocBuffer(nbytes)
 	defer freeBuffer(cDirection)
 	defer freeBuffer(cOut)
 	defer freeBuffer(cIn)
@@ -1122,7 +1130,7 @@ func (hdl *DeviceHandle) SwdIO(direction, out []byte) ([]byte, error) {
 	if rc != C.JAYLINK_OK {
 		return nil, apiError("jaylink_swd_io", rc)
 	}
-	return c2goSlice(cIn, n), nil
+	return c2goSlice(cIn, nbytes), nil
 }
 
 //-----------------------------------------------------------------------------

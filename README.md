@@ -17,8 +17,13 @@ This package provides a Go wrapper for the C-library API so the library can be c
 
  * libjaylink (https://gitlab.zapb.de/zapb/libjaylink/)
  * libusb-1.0 (https://libusb.info/)
+
+## Notes
+
+All C-API functions have Go wrappers.
+The public interface of this package is a 1-1 mapping from the C-API to a Go style function prototypes.
+There are a couple of novel functions added as helper routines, but in general any C usage of the library has a simple mapping to Go.
  
 ## Status
  
-All C-API functions have Go wrappers.
-Partial testing has been done, mostly using USB based J-Link devices.
+Some testing has been done, mostly using USB based J-Link devices.
