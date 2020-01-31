@@ -1,7 +1,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/deadsy/libjaylink)](https://goreportcard.com/report/github.com/deadsy/libjaylink)
 [![GoDoc](https://godoc.org/github.com/deadsy/libjaylink?status.svg)](https://godoc.org/github.com/deadsy/libjaylink)
 
-# libjaylink
+# jaylink
 Go bindings for the libjaylink library.
 
 ## What Is It?

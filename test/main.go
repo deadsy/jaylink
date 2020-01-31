@@ -13,7 +13,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/deadsy/libjaylink"
+	"github.com/deadsy/jaylink"
 )
 
 //-----------------------------------------------------------------------------
@@ -28,7 +28,7 @@ func logCallback(domain, msg string, user interface{}) {
 
 //-----------------------------------------------------------------------------
 
-func displayDevice(dev *libjaylink.Device) string {
+func displayDevice(dev *jaylink.Device) string {
 	s := []string{}
 	// hardware version
 	hw, err := dev.GetHardwareVersion()
@@ -80,7 +80,7 @@ func displayDevice(dev *libjaylink.Device) string {
 
 //-----------------------------------------------------------------------------
 
-func displayHandle(hdl *libjaylink.DeviceHandle) string {
+func displayHandle(hdl *jaylink.DeviceHandle) string {
 	s := []string{}
 	// firmware version
 	ver, err := hdl.GetFirmwareVersion()
@@ -98,10 +98,10 @@ func displayHandle(hdl *libjaylink.DeviceHandle) string {
 		s = append(s, fmt.Sprintf("capabilities:\n%s", caps))
 	}
 	// hardware info
-	if caps.HasCap(libjaylink.DEV_CAP_GET_HW_INFO) {
-		mask := libjaylink.HW_INFO_TARGET_POWER |
-			libjaylink.HW_INFO_ITARGET |
-			libjaylink.HW_INFO_ITARGET_PEAK
+	if caps.HasCap(jaylink.DEV_CAP_GET_HW_INFO) {
+		mask := jaylink.HW_INFO_TARGET_POWER |
+			jaylink.HW_INFO_ITARGET |
+			jaylink.HW_INFO_ITARGET_PEAK
 		info, err := hdl.GetHardwareInfo(mask)
 		if err == nil {
 			s = append(s, fmt.Sprintf("target power: %x", info[0]))
@@ -110,7 +110,7 @@ func displayHandle(hdl *libjaylink.DeviceHandle) string {
 		}
 	}
 	// free memory
-	if caps.HasCap(libjaylink.DEV_CAP_GET_FREE_MEMORY) {
+	if caps.HasCap(jaylink.DEV_CAP_GET_FREE_MEMORY) {
 		free, err := hdl.GetFreeMemory()
 		if err == nil {
 			s = append(s, fmt.Sprintf("free memory: %d bytes", free))
@@ -139,10 +139,10 @@ func displayHandle(hdl *libjaylink.DeviceHandle) string {
 
 func libTest() error {
 
-	fmt.Printf("package: %s\n", libjaylink.VersionPackageGetString())
-	fmt.Printf("library: %s\n", libjaylink.VersionLibraryGetString())
+	fmt.Printf("package: %s\n", jaylink.VersionPackageGetString())
+	fmt.Printf("library: %s\n", jaylink.VersionLibraryGetString())
 
-	ctx, err := libjaylink.Init()
+	ctx, err := jaylink.Init()
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func libTest() error {
 		return err
 	}
 
-	err = ctx.LogSetLevel(libjaylink.LOG_LEVEL_DEBUG)
+	err = ctx.LogSetLevel(jaylink.LOG_LEVEL_DEBUG)
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func libTest() error {
 		return err
 	}
 
-	err = ctx.DiscoveryScan(libjaylink.HIF_USB)
+	err = ctx.DiscoveryScan(jaylink.HIF_USB)
 	if err != nil {
 		return err
 	}

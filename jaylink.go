@@ -9,7 +9,7 @@ See: https://gitlab.zapb.de/zapb/libjaylink
 */
 //-----------------------------------------------------------------------------
 
-package libjaylink
+package jaylink
 
 /*
 #cgo pkg-config: libusb-1.0

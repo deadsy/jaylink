@@ -15,7 +15,7 @@ in other files, or in C source files.
 */
 //-----------------------------------------------------------------------------
 
-package libjaylink
+package jaylink
 
 /*
 #include <libjaylink/libjaylink.h>
