@@ -26,4 +26,5 @@ There are a couple of novel functions added as helper routines, but in general a
  
 ## Status
  
-Some testing has been done, mostly using USB based J-Link devices.
+ * Some testing has been done, mostly using USB based J-Link devices.
+ * Version 0.2.0 of the libjaylink library has been tested.
